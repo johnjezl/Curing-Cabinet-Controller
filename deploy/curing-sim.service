@@ -1,0 +1,38 @@
+[Unit]
+Description=Curing cabinet controller, SIMULATED PLANT (bench only)
+After=curing-hw.service curing-outputd.service
+Wants=curing-hw.service curing-outputd.service
+Conflicts=curing.service
+ConditionPathExists=/etc/curing/sim.env
+ConditionPathExists=!/etc/curing/production
+ConditionFileIsExecutable=/opt/curing/bin/cured
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=curing
+Group=curing
+SupplementaryGroups=gpio i2c video input render tty
+StateDirectory=curing-sim
+StateDirectoryMode=0750
+RuntimeDirectory=curing-cured
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+WorkingDirectory=/var/lib/curing-sim
+EnvironmentFile=/etc/curing/sim.env
+ExecStart=/opt/curing/bin/cured --sim --speed ${SIM_SPEED} --sim-outage ${SIM_OUTAGE} --sim-confirm=not-a-real-cabinet --sim-annunciate
+ExecStopPost=-/opt/curing/bin/cured post-stop
+WatchdogSec=10s
+TimeoutAbortSec=3s
+TimeoutStartSec=120s
+TimeoutStopSec=60s
+Restart=always
+RestartSec=1s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

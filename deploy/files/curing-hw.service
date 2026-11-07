@@ -1,0 +1,14 @@
+[Unit]
+Description=Curing cabinet hardware bring-up (runtime overlays, PWM, safe relay lines)
+After=local-fs.target systemd-udev-settle.service sys-kernel-config.mount systemd-modules-load.service
+Wants=sys-kernel-config.mount
+Before=curing-outputd.service curing.service multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/curing/libexec/curing-hw-init
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

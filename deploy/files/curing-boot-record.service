@@ -1,0 +1,12 @@
+[Unit]
+Description=Curing cabinet boot record (keeps crash history outside the journal)
+After=local-fs.target systemd-journal-flush.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/curing/libexec/curing-boot-record start
+ExecStop=/opt/curing/libexec/curing-boot-record mark-clean
+
+[Install]
+WantedBy=multi-user.target

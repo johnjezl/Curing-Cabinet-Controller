@@ -1,0 +1,40 @@
+[Unit]
+Description=Curing cabinet controller
+# Wants, not Requires: with failed bring-up or a guard restart, control must keep
+# running and report the fault. The guard refuses to drive anything it should not.
+After=curing-hw.service curing-outputd.service
+Wants=curing-hw.service curing-outputd.service
+Conflicts=curing-sim.service
+ConditionFileIsExecutable=/opt/curing/bin/cured
+# Never give up and never reboot for a crash loop: see docs/adr/0401.
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=curing
+Group=curing
+SupplementaryGroups=gpio i2c video input render tty
+StateDirectory=curing
+StateDirectoryMode=0750
+RuntimeDirectory=curing-cured
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+WorkingDirectory=/var/lib/curing
+ExecStart=/opt/curing/bin/cured
+# Runs however the process ended, including SIGKILL.
+ExecStopPost=-/opt/curing/bin/cured post-stop
+WatchdogSec=10s
+TimeoutAbortSec=3s
+TimeoutStartSec=120s
+TimeoutStopSec=60s
+Restart=always
+RestartSec=1s
+OOMScoreAdjust=-500
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,22 @@
+#!/bin/bash
+# Test helper for the bench rig, used by deploy/rig.sh. It exists so these test
+# actions are installed by provisioning rather than typed over SSH. Root only.
+set -eu
+PARAM=/sys/module/pinctrl_rp1/parameters/persist_gpio_outputs
+case "${1:-}" in
+  panic)          # panic with the configured kernel.panic setting
+    echo c > /proc/sysrq-trigger ;;
+  panic-halt)     # kernel.panic=0 until the reset that follows: only the hardware watchdog can recover
+    sysctl -q kernel.panic=0; echo c > /proc/sysrq-trigger ;;
+  param-y) echo Y > "$PARAM" ;;
+  param-n) echo N > "$PARAM" ;;
+  panel-overlay)  # panel experiment: load a stock overlay at runtime on this boot only
+    shift; dtoverlay "$@"; sleep 3; dtoverlay -l ;;
+  wipe-real-state)      # first-boot condition for a real-mode test; the service must be stopped
+    systemctl is-active --quiet curing.service && { echo "stop curing.service first" >&2; exit 1; }
+    rm -rf /var/lib/curing/core /var/lib/curing/panel.json /run/curing-cured/starts ;;
+  display-missing-on)   # stand-in for a blank-panel boot, on tmpfs, gone at the next boot
+    cp /run/curing/display-status /run/curing/display-missing ;;
+  display-missing-off) rm -f /run/curing/display-missing ;;
+  *) echo "usage: curing-rig-test panic|panic-halt|param-y|param-n|wipe-real-state|display-missing-on|display-missing-off|panel-overlay <name> [params]" >&2; exit 2 ;;
+esac

@@ -1,0 +1,134 @@
+# Headless tap walkthrough. tapid resolves to a coordinate; the log records it.
+# 1. Manual setpoint change, cancel, then commit
+shot 01-home
+tapid home.temp
+shot 02-set
+tapid edit.plus.0
+tapid edit.plus.0
+tapid edit.minus.1
+shot 03-set-pending
+tapid edit.cancel
+shot 04-set-cancelled
+tapid edit.plus.0
+tapid edit.save
+wait 2500
+shot 05-set-saved
+# 2. Choose and start a recipe
+tapid nav.cure
+shot 06-recipes
+tapid recipe.0
+shot 07-recipe
+tapid recipe.start
+shot 08-start-confirm
+tapid dialog.ok
+shot 08b-start-tap-refused
+holdid dialog.ok 2100
+wait 2500
+shot 09-running
+# 3. Pause, resume, next phase with a refused tap then a full hold, stop
+tapid cure.pause
+shot 09b-pause-tap-refused
+wait 3100
+holdid cure.pause 1100
+wait 2500
+shot 10-paused
+tapid cure.resume
+wait 2500
+tapid cure.next
+shot 11-next-confirm
+tapid dialog.ok
+holdid dialog.ok 2100
+wait 2500
+shot 12-next-phase
+tapid cure.stop
+shot 13-stop-confirm
+holdid dialog.ok 800
+shot 14-stop-short-hold
+wait 3200
+tapid dialog.cancel
+# 3b. Override during a recipe
+tapid nav.set
+tapid edit.plus.0
+shot 14b-override-pending
+tapid edit.save
+shot 14c-override-confirm
+tapid dialog.ok
+shot 14d-override-tap-refused
+wait 3100
+holdid dialog.ok 2100
+wait 2500
+tapid nav.home
+shot 14e-override-home
+# 4. An alarm arrives: silence, acknowledge, history
+fixture alarm-temp-high
+tapid nav.home
+shot 15-alarm-home
+tapid home.silence
+wait 2500
+shot 16-silenced-home
+tapid nav.alarms
+shot 17-alarms-silenced
+tapid alarms.ackall
+wait 2500
+shot 18-alarms-acked
+tapid alarms.tab.1
+shot 19-history
+tapid history.page.next
+shot 20-history-p2
+wait 31000
+shot 21-menu-timeout-home
+# 5. Sensor fault, hold, end of cure
+fixture stale-temp
+shot 22-stale
+fixture hold-compressor
+shot 23-hold
+fixture end-of-cure-alarm
+shot 24-end-of-cure-home
+tapid banner
+shot 25-verify
+tapid cure.end
+shot 26-end-confirm
+tapid dialog.cancel
+# 6. Keylock
+fixture normal
+tapid nav.more
+holdid more.lock 2100
+wait 4200
+tapid nav.set
+shot 27-locked-set
+tapid nav.more
+holdid lock.unlock 1000
+shot 28-unlock-short
+wait 3200
+holdid lock.unlock 3100
+shot 29-unlocked
+# 7. Installer gate
+tapid more.installer
+tapid keypad.1
+tapid keypad.ok
+shot 30-wrong-code
+wait 3200
+tapid keypad.2
+tapid keypad.5
+tapid keypad.8
+tapid keypad.0
+tapid keypad.ok
+shot 31-installer
+tapid inst.limits
+shot 32-limits
+tapid edit.plus.0
+tapid edit.save
+wait 2500
+shot 33-limits-saved
+tapid nav.home
+# 8. Idle: dim, sleep, wake touch does nothing else, alarm wakes
+wait 601000
+shot 34-dim
+wait 3000000
+shot 35-sleep
+tap 201 430
+shot 36-woken-still-home
+wait 3601000
+shot 37-asleep-again
+fixture alarm-rh-high
+shot 38-alarm-woke-screen

@@ -1,0 +1,31 @@
+// Runtime overlay, loaded through configfs by curing-hw-init. Enables RP1 PWM0
+// and routes channel 0 to GPIO 12 for the ARCTIC P12 Pro's PWM input. The stock
+// pwm.dtbo and pwm-2chan.dtbo target the BCM283x "pwm" node and are not mapped
+// for bcm2712. See docs/adr/0202. RP1 PWM1 (pwmchip0 at boot) drives the board's
+// own fan header and is left alone.
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2712";
+
+	fragment@0 {
+		target = <&rp1_gpio>;
+		__overlay__ {
+			curing_fan_pwm_pins: curing_fan_pwm_pins {
+				pins = "gpio12";
+				function = "pwm0";
+				bias-disable;
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&rp1_pwm0>;
+		__overlay__ {
+			pinctrl-names = "default";
+			pinctrl-0 = <&curing_fan_pwm_pins>;
+			status = "okay";
+		};
+	};
+};

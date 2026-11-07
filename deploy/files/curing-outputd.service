@@ -1,0 +1,27 @@
+[Unit]
+Description=Curing cabinet output guard (owns relay lines, enforces the command lease)
+After=curing-hw.service
+# Fail closed: if bring-up failed, nothing owns the relay lines and they stay low.
+Requires=curing-hw.service
+Before=curing.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=curing
+Group=curing
+SupplementaryGroups=gpio
+RuntimeDirectory=curing-outputs
+RuntimeDirectoryMode=0750
+ExecStart=/opt/curing/bin/curing-outputd
+# The enforcement loop pets this. SIGKILL works on a frozen process too, and its
+# death makes the kernel stop driving the lines.
+WatchdogSec=2s
+WatchdogSignal=SIGKILL
+Restart=always
+RestartSec=200ms
+ExecStopPost=+/opt/curing/libexec/curing-safe-outputs
+
+[Install]
+WantedBy=multi-user.target

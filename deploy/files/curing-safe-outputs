@@ -1,0 +1,12 @@
+#!/bin/bash
+# Fail-safe for the relay lines: release them to input with pull-down, which
+# de-energizes every high-level-trigger relay input. Used at boot by
+# curing-hw-init and available to the application unit as ExecStopPost=.
+# Needs root; does not need the application, overlays or any driver.
+set -u
+RELAY_PINS="17 22 23 24 25 27"
+rc=0
+for p in $RELAY_PINS; do
+  pinctrl set "$p" ip pd || { echo "curing-safe-outputs: pin $p failed"; rc=1; }
+done
+exit $rc

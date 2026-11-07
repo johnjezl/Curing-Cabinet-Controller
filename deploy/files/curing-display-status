@@ -1,0 +1,24 @@
+#!/bin/bash
+# Records whether the panel came up on this boot, for the application to read. Run by
+# curing-hw-init. display-status always exists afterwards; display-missing exists only
+# when the panel or its touch controller is not up. See docs/adr/0209.
+set -u
+RUN="${CURING_RUN_DIR:-/run/curing}"
+FB="${CURING_FB:-/dev/fb0}"
+INPUT="${CURING_INPUT_DEVICES:-/proc/bus/input/devices}"
+UPTIME="${CURING_UPTIME:-/proc/uptime}"
+fb=no; touch=no
+[ -e "$FB" ] && fb=yes
+grep -qs ft5x06 "$INPUT" && touch=yes
+mkdir -p "$RUN"
+# Who enabled the panel: the firmware, or curing-hw-init's runtime overlay.
+source=firmware
+[ -e "${CURING_PANEL_MARK:-/run/curing-panel-overlay}" ] && source=runtime-overlay
+printf 'fb0=%s\ntouch=%s\npanel_source=%s\nuptime=%s\n' "$fb" "$touch" "$source" "$(cut -d' ' -f1 "$UPTIME")" > "$RUN/display-status.tmp"
+mv "$RUN/display-status.tmp" "$RUN/display-status"
+if [ "$fb" = yes ] && [ "$touch" = yes ]; then
+  rm -f "${RUN:?}/display-missing"
+else
+  cp "$RUN/display-status" "$RUN/display-missing"
+  echo "<2>curing-display-status: display not up: fb0=$fb touch=$touch"
+fi
