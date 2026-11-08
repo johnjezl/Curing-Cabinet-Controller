@@ -403,6 +403,7 @@ func runReal(ctx context.Context) error {
 		}
 	}()
 	r.sys = newSysAlarms(clk.Now, clk.Trusted, logfJ)
+	r.sys.Persist("/var/lib/curing/system-alarms.json")
 	r.checkSafe()
 	r.noteStart()
 

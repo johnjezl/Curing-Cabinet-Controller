@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/johnjezl/curing-cabinet-controller/internal/api"
@@ -41,7 +42,7 @@ var alarmDefs = map[string]alarmDef{
 	CodeAirSuspect:   {api.SevWarning, "Airflow reading looks wrong", "Check the FS3000. The fan holds its last good speed.", "m/s"},
 	CodeScaleFault:   {api.SevWarning, "Scale not reading", "Check the HX711 wiring. Weight-based phase changes are paused; temperature and humidity control continue.", ""},
 	CodeScaleSuspect: {api.SevWarning, "Weight reading looks wrong", "Check nothing touches the load cell. Weight-based phase changes are paused.", "g"},
-	CodeWeightStep:   {api.SevInfo, "Weight changed suddenly", "Weight loss is now counted on the new load: the change was added to the start weight. If nothing was added or removed, check the scale.", "g"},
+	CodeWeightStep:   {api.SevInfo, "Weight changed suddenly", "Weight loss now covers the new load: added product counts from no loss, removed product as having lost what the rest had. If nothing was added or removed, check the scale.", "g"},
 	CodeFanStall:     {api.SevCritical, "Fan stopped", "Check the fan and its cable. Heater and humidifier are off, and cooling is restricted.", ""},
 	CodeFanTach:      {api.SevWarning, "Fan speed signal lost", "Check the tach wire. Air is still measured as moving.", ""},
 	CodeAirBlocked:   {api.SevCritical, "Fan turning but no air measured", "Check for a blocked manifold or a failed airflow sensor. Heater and humidifier are off.", "m/s"},
@@ -75,6 +76,9 @@ type activeAlarm struct {
 	mono     float64
 	restored bool
 	warnBeep bool
+	// subjectDur is how long an outage alarm's outage lasted, -1 if not known. It is
+	// the alarm's own, so the next outage cannot overwrite it.
+	subjectDur float64
 	// Signalling window; see updateBuzzer.
 	callUntil, nextCall, ackT float64
 	buzzUntil, nextBuzz       float64
@@ -103,12 +107,12 @@ func newAlarms() alarms {
 
 // raise creates an alarm if not already active.
 func (c *Core) raise(code string, peak, limit float64) {
-	c.raiseSince(code, peak, limit, time.Time{}, false)
+	c.raiseSince(code, peak, limit, time.Time{}, false, -1)
 }
 
 // raiseSince raises an alarm whose subject began at since (when known, sinceOK),
 // before the moment it could be raised.
-func (c *Core) raiseSince(code string, peak, limit float64, since time.Time, sinceOK bool) {
+func (c *Core) raiseSince(code string, peak, limit float64, since time.Time, sinceOK bool, subjectDur float64) {
 	if a, ok := c.al.active[code]; ok {
 		c.updatePeak(a, peak)
 		return
@@ -132,13 +136,13 @@ func (c *Core) raiseSince(code string, peak, limit float64, since time.Time, sin
 	if sinceOK && !since.IsZero() {
 		al.Since, evSince = since, since
 	}
-	aa := &activeAlarm{a: al, mono: c.t}
+	aa := &activeAlarm{a: al, mono: c.t, subjectDur: subjectDur}
 	c.al.active[code] = aa
 	c.al.order = append(c.al.order, code)
 	if def.Sev != api.SevInfo {
 		c.announce(aa)
 	}
-	c.event(Event{Type: EvAlarm, Code: code, ID: al.ID, Sev: string(def.Sev), Title: def.Title, Action: def.Action, Peak: peak, Limit: limit, Unit: def.Unit, Since: evSince})
+	c.event(Event{Type: EvAlarm, Code: code, ID: al.ID, Sev: string(def.Sev), Title: def.Title, Action: def.Action, Peak: peak, Limit: limit, Unit: def.Unit, Since: evSince, Dur: subjectDur})
 }
 
 func (c *Core) updatePeak(a *activeAlarm, v float64) {
@@ -167,13 +171,10 @@ func (c *Core) clear(code string) {
 	if a.restored {
 		a.a.DurationSec = -1 // spans a restart; duration on one mono clock is meaningless
 	}
-	if (code == CodeOutage || code == CodeRestarted) && c.outage.Detected {
+	if code == CodeOutage || code == CodeRestarted {
 		// What matters about an outage is how long control was away, not how long the
 		// alarm stayed listed: -1 only when that is not known (integration defect 6).
-		a.a.DurationSec = -1
-		if c.outage.DurationOK {
-			a.a.DurationSec = c.outage.Duration.Seconds()
-		}
+		a.a.DurationSec = a.subjectDur
 	}
 	c.al.history = append(c.al.history, a.a)
 	const histCap = 5000
@@ -700,7 +701,7 @@ func (c *Core) escalate(a *activeAlarm, sev api.Severity) {
 	a.a.Severity = sev
 	a.a.Acked = false
 	c.announce(a)
-	c.event(Event{Type: EvAlarm, Code: a.a.Code, ID: a.a.ID, Sev: string(sev), Title: a.a.Title, Action: a.a.Action, Peak: a.a.Peak, Limit: a.a.Limit, Unit: a.a.Unit})
+	c.event(Event{Type: EvAlarm, Code: a.a.Code, ID: a.a.ID, Sev: string(sev), Title: a.a.Title, Action: a.a.Action, Peak: a.a.Peak, Limit: a.a.Limit, Unit: a.a.Unit, Since: a.a.Since})
 }
 
 // isEventAlarm names alarms that report something that happened, not something
@@ -829,20 +830,45 @@ func (c *Core) wallNow() time.Time { return c.clock.Now() }
 // replayEvents rebuilds alarm history and active alarms from the journal.
 func (c *Core) replayEvents(evs []Event) {
 	byID := map[string]*api.Alarm{}
+	subject := map[string]float64{} // outage alarms: how long the outage lasted
+	lastOutageID := ""
 	var ids []string
 	for i := range evs {
 		e := &evs[i]
 		switch e.Type {
 		case EvAlarm:
+			if a, dup := byID[e.ID]; dup {
+				// An escalation: same alarm, new severity. Its date stays the first one.
+				a.Severity, a.Title, a.Action = api.Severity(e.Sev), e.Title, e.Action
+				if e.Peak != 0 {
+					a.Peak = e.Peak
+				}
+				continue
+			}
 			a := &api.Alarm{ID: e.ID, Code: e.Code, Severity: api.Severity(e.Sev), Title: e.Title, Action: e.Action,
 				Since: e.Wall, Peak: e.Peak, Limit: e.Limit, Unit: e.Unit, ClockOK: e.ClkOK}
 			if !e.Since.IsZero() {
 				a.Since = e.Since
 			}
-			if _, dup := byID[e.ID]; !dup {
-				ids = append(ids, e.ID)
-			}
+			ids = append(ids, e.ID)
 			byID[e.ID] = a
+			if e.Code == CodeOutage || e.Code == CodeRestarted {
+				lastOutageID = e.ID
+				subject[e.ID] = -1
+				if e.Dur > 0 {
+					subject[e.ID] = e.Dur
+				}
+			}
+		case EvOutage:
+			// Only a duration resolved later belongs to the alarm already raised; the
+			// boot's own outage event comes before its alarm.
+			if lastOutageID != "" && e.Dur > 0 && strings.HasPrefix(e.Msg, "duration resolved") {
+				subject[lastOutageID] = e.Dur
+			}
+		case EvOutageEnd:
+			if a := byID[lastOutageID]; a != nil && a.Cleared.IsZero() {
+				a.Peak = e.Peak
+			}
 		case EvClear:
 			if a := byID[e.ID]; a != nil {
 				a.Cleared = e.Wall
@@ -862,7 +888,11 @@ func (c *Core) replayEvents(evs []Event) {
 			if _, ok := c.al.active[a.Code]; ok {
 				continue
 			}
-			c.al.active[a.Code] = &activeAlarm{a: *a, mono: c.t, restored: true}
+			sd, ok := subject[id]
+			if !ok {
+				sd = -1
+			}
+			c.al.active[a.Code] = &activeAlarm{a: *a, mono: c.t, restored: true, subjectDur: sd}
 			c.al.order = append(c.al.order, a.Code)
 		} else {
 			c.al.history = append(c.al.history, *a)

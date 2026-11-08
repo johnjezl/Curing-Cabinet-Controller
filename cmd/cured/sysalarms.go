@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -56,6 +58,66 @@ type sysAlarms struct {
 	// they wait in pending.
 	record  func(code, sev, msg string)
 	pending [][3]string
+	// path keeps the event alarms and the history across a restart or power cut;
+	// conditions are found again by the new process (integration defect 6, re-test).
+	path string
+}
+
+type sysSaved struct {
+	Events []api.Alarm          `json:"events"`
+	Real   map[string]time.Time `json:"real"`
+	Hist   []api.Alarm          `json:"hist"`
+	Seq    int                  `json:"seq"`
+}
+
+// Persist loads what an earlier process kept at path and keeps it there from now on.
+func (s *sysAlarms) Persist(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.path = path
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var v sysSaved
+	if err := json.Unmarshal(b, &v); err != nil {
+		s.logf("<4>cured: system alarms file unreadable, starting empty: %v", err)
+		return
+	}
+	for i := range v.Events {
+		a := v.Events[i]
+		if _, up := s.active[a.Code]; up {
+			continue
+		}
+		s.active[a.Code] = &a
+		s.event[a.Code] = true
+		s.eventReal[a.Code] = v.Real[a.Code]
+	}
+	s.hist = append(s.hist, v.Hist...)
+	if v.Seq > s.seq {
+		s.seq = v.Seq
+	}
+}
+
+// save writes the event alarms and history. Caller holds mu.
+func (s *sysAlarms) save() {
+	if s.path == "" {
+		return
+	}
+	v := sysSaved{Real: map[string]time.Time{}, Hist: s.hist, Seq: s.seq}
+	for code, a := range s.active {
+		if s.event[code] {
+			v.Events = append(v.Events, *a)
+			v.Real[code] = s.eventReal[code]
+		}
+	}
+	b, err := json.Marshal(v)
+	if err == nil {
+		err = atomicWrite(s.path, b)
+	}
+	if err != nil {
+		s.logf("<4>cured: system alarms file: %v", err)
+	}
 }
 
 // SetRecord connects the journal and writes what waited for it.
@@ -132,6 +194,7 @@ func (s *sysAlarms) Raise(code string, sev api.Severity, title, action string) {
 	s.silenced = false // something new must be heard
 	s.logf("<2>cured: system alarm raised %s: %s", code, title)
 	s.note(code, string(sev), "raised: "+title)
+	s.save()
 }
 
 // Clear ends the condition.
@@ -152,6 +215,7 @@ func (s *sysAlarms) Clear(code string) {
 	if len(s.hist) > sysKeepHist {
 		s.hist = s.hist[:sysKeepHist]
 	}
+	s.save()
 	s.logf("<4>cured: system alarm cleared %s", code)
 }
 

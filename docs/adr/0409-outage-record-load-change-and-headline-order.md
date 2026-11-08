@@ -33,3 +33,17 @@ Status: accepted. Fixes integration defects 6, 8 and 9. Amends ADR 0107 and ADR 
   dated at the return.
 - Re-basing assumes the added product starts at no loss. For removed product it assumes the pieces taken out had lost
   what the batch had; the figure is a batch yield, not a per-piece one, as before.
+
+## Revision after the first re-test (defect 6; defects 8 and 9 passed)
+- An outage alarm still unacknowledged at the next outage took the next one's duration, because its duration was read
+  from the current outage record when it was cleared. Each outage alarm now carries its own outage length, journalled
+  with it, and replay restores it; a length resolved later, when the clock arrives, is journalled too.
+- A correctly dated POWER_OUTAGE was re-dated to its return at the next restart: its escalation was journalled as a
+  second raise, and replay took the second date. Replay now keeps the first raise's date for an escalation, and the
+  escalation carries it as well. The peak recorded when the outage closes is restored with the alarm.
+- cured's own event alarms (the restart burst) and its alarm history are kept in the state directory
+  (`system-alarms.json`), so an unacknowledged one is not lost at a power cut. Conditions are found again by the new
+  process and are not kept.
+- Weight loss: removing product scaled the start weight by the change instead of in proportion, crediting the remaining
+  product with water the removed pieces had lost (5.6 % jumped to 7.0 %, the unsafe direction). A removal now scales the
+  start weight by the share of the load that stays, so the figure does not jump; an addition still adds.

@@ -384,7 +384,11 @@ func (c *Core) boot(rec Recovered) {
 		// dated from the loss, not the return (integration defect 6).
 		c.clear(CodeOutage)
 		c.clear(CodeRestarted)
-		c.raiseSince(c.outageCode, math.Inf(-1), 0, lastWall, lastOK && c.outage.DurationOK)
+		subj := -1.0
+		if c.outage.DurationOK {
+			subj = dur
+		}
+		c.raiseSince(c.outageCode, math.Inf(-1), 0, lastWall, lastOK && c.outage.DurationOK, subj)
 		if a := c.al.active[c.outageCode]; a != nil {
 			a.a.Peak = 0
 		}
@@ -659,6 +663,9 @@ func (c *Core) updateClock(dt float64) {
 					p.OutageKnownS += c.outage.Duration.Seconds()
 				}
 				c.event(Event{Type: EvOutage, Msg: fmt.Sprintf("duration resolved %.0f s", c.outage.Duration.Seconds()), Dur: c.outage.Duration.Seconds()})
+				if a := c.al.active[c.outageCode]; a != nil && a.subjectDur < 0 {
+					a.subjectDur = c.outage.Duration.Seconds()
+				}
 			}
 		}
 	}
@@ -766,7 +773,7 @@ func (c *Core) ingest(in inputs, dt float64) {
 			c.weightF.v, c.weightF.init = g, true
 			if c.rebasePending {
 				c.rebasePending = false
-				c.rebaseLoss(g - c.weightBefore)
+				c.rebaseLoss(c.weightBefore, g)
 			}
 		}
 	}

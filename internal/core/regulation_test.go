@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"math"
+	"sort"
 	"testing"
 	"time"
 
@@ -150,5 +151,81 @@ func TestOutageRecordedFromTheLossWithItsCause(t *testing.T) {
 				t.Error("outage record has no cause")
 			}
 		})
+	}
+}
+
+// The re-test of defect 6: an outage still unacknowledged at the next one took that
+// one's duration, and a later restart re-dated it to its return.
+func TestEachOutageKeepsItsOwnDateAndLengthAcrossLaterOnes(t *testing.T) {
+	r, err := sim.NewRun(sim.Options{Plant: sim.BasePlant(), KeepRows: true, SampleSec: 60, OSBootID: "boot-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.SetCal()
+	r.SetPoint(13, 76, 1.0)
+	r.Advance(6 * 3600)
+	type cut struct {
+		boot string
+		dur  float64
+		lost time.Time
+	}
+	cuts := []cut{{"boot-b", 3 * 3600, time.Time{}}, {"boot-b", 1800, time.Time{}}, {"boot-b", 600, time.Time{}}}
+	for i := range cuts {
+		cuts[i].lost = r.Core.Snapshot().Now
+		r.O.OSBootID = cuts[i].boot
+		if err := r.PowerLoss(cuts[i].dur, 60); err != nil {
+			t.Fatal(err)
+		}
+		r.Advance(3 * 3600) // nobody acknowledges anything
+	}
+	s := r.Core.Snapshot()
+	var got []api.Alarm
+	for _, list := range [][]api.Alarm{s.History, s.Active} {
+		for _, a := range list {
+			if a.Code == "POWER_OUTAGE" || a.Code == "CONTROLLER_RESTARTED" {
+				got = append(got, a)
+			}
+		}
+	}
+	if len(got) != len(cuts) {
+		t.Fatalf("%d outage alarms for %d outages: %+v", len(got), len(cuts), got)
+	}
+	sort.Slice(got, func(i, j int) bool { return got[i].Since.Before(got[j].Since) })
+	want := []string{"POWER_OUTAGE", "CONTROLLER_RESTARTED", "CONTROLLER_RESTARTED"}
+	for i, a := range got {
+		if a.Code != want[i] {
+			t.Errorf("outage %d is %s, want %s", i, a.Code, want[i])
+		}
+		if d := a.Since.Sub(cuts[i].lost); d < -2*time.Minute || d > 2*time.Minute {
+			t.Errorf("outage %d dated %v from its loss", i, d)
+		}
+		if !a.Cleared.IsZero() && math.Abs(a.DurationSec-cuts[i].dur) > 300 {
+			t.Errorf("outage %d of %.0f s recorded as %.0f s", i, cuts[i].dur, a.DurationSec)
+		}
+	}
+}
+
+// The re-test of defect 8: taking 3 kg out made loss jump from 5.6 % to 7.0 %, crediting
+// the remaining product with water the removed pieces had lost.
+func TestWeightLossDoesNotJumpWhenProductIsRemoved(t *testing.T) {
+	r := newRun(t)
+	sp := api.Setpoints{TempC: 13, RHPct: 76, AirMS: 1.0}
+	rc := api.Recipe{ID: "t", Name: "t", Phases: []api.PhaseSpec{{Name: "dry", Setpoint: sp, Duration: 10 * 24 * time.Hour}}}
+	if err := r.Core.Do(api.Command{Kind: api.CmdSaveRecipe, Recipe: &rc}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Core.Do(api.Command{Kind: api.CmdStart, RecipeID: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	r.Advance(4 * 86400)
+	before := r.Core.Snapshot().Program.WeightLossPct
+	r.Plant.DoorIsOpen = true
+	r.Advance(60)
+	r.Plant.ProdKg *= 0.7 // a third of the pieces taken out
+	r.Plant.DoorIsOpen = false
+	r.Advance(1800)
+	after := r.Core.Snapshot().Program.WeightLossPct
+	if math.Abs(after-before) > 0.3 {
+		t.Fatalf("loss %.2f %% before removing product, %.2f %% after: it must not jump", before, after)
 	}
 }

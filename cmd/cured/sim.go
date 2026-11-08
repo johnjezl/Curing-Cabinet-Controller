@@ -446,6 +446,7 @@ func runSim(ctx context.Context, o simOptions) error {
 	s.clk = sim.NewClock(true)
 	s.clk.VT, s.clk.BootVT = s.pl.T, s.pl.T
 	r.sys = newSysAlarms(s.clk.Now, s.clk.Trusted, logfJ)
+	r.sys.Persist(filepath.Join(simStateDir, "system-alarms.json"))
 	r.checkSafe()
 	r.noteStart()
 

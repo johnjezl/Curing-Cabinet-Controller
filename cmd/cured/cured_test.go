@@ -351,3 +351,25 @@ func TestRestartLoopIsAnEventNotALatch(t *testing.T) {
 		t.Fatal("acknowledged, it moves to history")
 	}
 }
+
+// The re-test of defect 6: an unacknowledged restart-burst alarm vanished at a power cut
+// and never reached the history. Events and history now survive a new process.
+func TestSystemEventSurvivesANewProcess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "system-alarms.json")
+	now := time.Unix(1000, 0)
+	s := newSysAlarms(func() time.Time { return now }, func() bool { return true }, func(string, ...any) {})
+	s.Persist(path)
+	s.RaiseEvent(CodeRestartLoop, api.SevCritical, "t", "a")
+	s.Raise(CodeSafeState, api.SevCritical, "t", "a") // a condition: found again, not kept
+	s2 := newSysAlarms(func() time.Time { return now }, func() bool { return true }, func(string, ...any) {})
+	s2.Persist(path)
+	if codes := s2.Codes(); len(codes) != 1 || codes[0] != CodeRestartLoop {
+		t.Fatalf("after a new process: %v", codes)
+	}
+	s2.Ack("")
+	s3 := newSysAlarms(func() time.Time { return now }, func() bool { return true }, func(string, ...any) {})
+	s3.Persist(path)
+	if len(s3.Active()) != 0 || len(s3.History()) != 1 || s3.History()[0].Code != CodeRestartLoop {
+		t.Fatalf("acknowledged, it must be in the kept history: active %v history %v", s3.Codes(), s3.History())
+	}
+}
