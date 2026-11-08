@@ -194,8 +194,10 @@ func (s *sysAlarms) Active() []api.Alarm {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]api.Alarm, 0, len(s.active))
-	for _, a := range s.active {
-		out = append(out, *a)
+	for code, a := range s.active {
+		x := *a
+		x.Event = s.event[code]
+		out = append(out, x)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out

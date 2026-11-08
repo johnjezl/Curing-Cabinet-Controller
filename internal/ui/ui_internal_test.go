@@ -175,3 +175,28 @@ func TestStatusWordsNeverClaimProduct(t *testing.T) {
 		t.Fatalf("%+v", st)
 	}
 }
+
+// Integration defect 9: the door was hidden behind a temperature warning, and old
+// events headlined over a live critical excursion and over the end of the cure.
+func TestHeadlineRanksLiveConditionsOverEvents(t *testing.T) {
+	t0 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	al := func(code string, sev api.Severity, event bool, at time.Duration) api.Alarm {
+		return api.Alarm{ID: code, Code: code, Severity: sev, Event: event, Since: t0.Add(at)}
+	}
+	got := sortAlarms([]api.Alarm{
+		al("OUTPUTS_DROPPED", api.SevCritical, true, 0),
+		al("CONTROLLER_RESTART_LOOP", api.SevCritical, true, time.Hour),
+		al("TEMP_LOW", api.SevWarning, false, 2*time.Hour),
+		al("DOOR_OPEN", api.SevWarning, false, 3*time.Hour),
+		al("TEMP_HIGH_CRITICAL", api.SevCritical, false, 4*time.Hour),
+		al("CURE_FINISHED", api.SevInfo, true, 5*time.Hour),
+	})
+	var order []string
+	for _, a := range got {
+		order = append(order, a.Code)
+	}
+	want := []string{"TEMP_HIGH_CRITICAL", "DOOR_OPEN", "TEMP_LOW", "CURE_FINISHED", "CONTROLLER_RESTART_LOOP", "OUTPUTS_DROPPED"}
+	if strings.Join(order, ",") != strings.Join(want, ",") {
+		t.Fatalf("order %v, want %v", order, want)
+	}
+}

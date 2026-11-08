@@ -148,6 +148,24 @@ func (c *Core) advancePhase(why string) {
 	c.saveSoon()
 }
 
+// rebaseLoss adds a load change to the start weight. Weight loss then stays what it
+// means, the mass lost over all the mass that went in, and does not read -46 % after
+// 5 kg of fresh product goes in (integration defect 8). If the load is gone, the start
+// weight is cleared and the next good reading becomes the new start.
+func (c *Core) rebaseLoss(delta float64) {
+	p := &c.st.Program
+	if p.State == api.RunIdle || p.StartWeightG <= 0 {
+		return
+	}
+	before := c.lossPct()
+	p.StartWeightG += delta
+	if p.StartWeightG < 100 {
+		p.StartWeightG = 0
+	}
+	c.event(Event{Type: EvPhase, Msg: fmt.Sprintf("load changed by %+.0f g: weight loss re-based on the new load (%.1f %% before, start weight now %.0f g)", delta, before, p.StartWeightG)})
+	c.saveSoon()
+}
+
 func (c *Core) lossPct() float64 {
 	p := &c.st.Program
 	if p.StartWeightG <= 0 || !c.weightF.init {

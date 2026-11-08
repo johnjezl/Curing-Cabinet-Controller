@@ -29,6 +29,7 @@ var alarmDefs = map[string]alarmDef{
 	CodeAirHigh:      {api.SevInfo, "Airflow above target", "The fan cannot go slower. Lower resistance or accept the higher flow.", "m/s"},
 	CodeDoorOpen:     {api.SevWarning, "Door open too long", "Close the door.", "s"},
 	CodeOutage:       {api.SevWarning, "Power was lost", "Read the outage record. Inspect product and judge it by your own process plan.", "°C"},
+	CodeRestarted:    {api.SevWarning, "Controller stopped and restarted", "Control stopped without an orderly shutdown, with power on, and restarted; outputs were off meanwhile. Read the outage record and the system log.", "°C"},
 	CodeClimateFault: {api.SevCritical, "Temperature and humidity sensor not reading", "Check the DHT22 wiring. Heater and humidifier are off; cooling repeats its recent pattern with no feedback.", ""},
 	CodeTempSuspect:  {api.SevCritical, "Temperature reading looks wrong", "Check against a separate thermometer. Heater and humidifier are off; cooling repeats its recent pattern with no feedback.", "°C"},
 	CodeRHSuspect:    {api.SevCritical, "Humidity reading looks wrong", "Check the sensor. Humidity control is off; temperature control continues.", "%RH"},
@@ -40,7 +41,7 @@ var alarmDefs = map[string]alarmDef{
 	CodeAirSuspect:   {api.SevWarning, "Airflow reading looks wrong", "Check the FS3000. The fan holds its last good speed.", "m/s"},
 	CodeScaleFault:   {api.SevWarning, "Scale not reading", "Check the HX711 wiring. Weight-based phase changes are paused; temperature and humidity control continue.", ""},
 	CodeScaleSuspect: {api.SevWarning, "Weight reading looks wrong", "Check nothing touches the load cell. Weight-based phase changes are paused.", "g"},
-	CodeWeightStep:   {api.SevInfo, "Weight changed suddenly", "If product was added or removed, weight loss is no longer comparable with the start weight.", "g"},
+	CodeWeightStep:   {api.SevInfo, "Weight changed suddenly", "Weight loss is now counted on the new load: the change was added to the start weight. If nothing was added or removed, check the scale.", "g"},
 	CodeFanStall:     {api.SevCritical, "Fan stopped", "Check the fan and its cable. Heater and humidifier are off, and cooling is restricted.", ""},
 	CodeFanTach:      {api.SevWarning, "Fan speed signal lost", "Check the tach wire. Air is still measured as moving.", ""},
 	CodeAirBlocked:   {api.SevCritical, "Fan turning but no air measured", "Check for a blocked manifold or a failed airflow sensor. Heater and humidifier are off.", "m/s"},
@@ -102,6 +103,12 @@ func newAlarms() alarms {
 
 // raise creates an alarm if not already active.
 func (c *Core) raise(code string, peak, limit float64) {
+	c.raiseSince(code, peak, limit, time.Time{}, false)
+}
+
+// raiseSince raises an alarm whose subject began at since (when known, sinceOK),
+// before the moment it could be raised.
+func (c *Core) raiseSince(code string, peak, limit float64, since time.Time, sinceOK bool) {
 	if a, ok := c.al.active[code]; ok {
 		c.updatePeak(a, peak)
 		return
@@ -121,13 +128,17 @@ func (c *Core) raise(code string, peak, limit float64) {
 		Unit:     def.Unit,
 		ClockOK:  c.clockOK,
 	}
+	var evSince time.Time
+	if sinceOK && !since.IsZero() {
+		al.Since, evSince = since, since
+	}
 	aa := &activeAlarm{a: al, mono: c.t}
 	c.al.active[code] = aa
 	c.al.order = append(c.al.order, code)
 	if def.Sev != api.SevInfo {
 		c.announce(aa)
 	}
-	c.event(Event{Type: EvAlarm, Code: code, ID: al.ID, Sev: string(def.Sev), Title: def.Title, Action: def.Action, Peak: peak, Limit: limit, Unit: def.Unit})
+	c.event(Event{Type: EvAlarm, Code: code, ID: al.ID, Sev: string(def.Sev), Title: def.Title, Action: def.Action, Peak: peak, Limit: limit, Unit: def.Unit, Since: evSince})
 }
 
 func (c *Core) updatePeak(a *activeAlarm, v float64) {
@@ -155,6 +166,14 @@ func (c *Core) clear(code string) {
 	a.a.DurationSec = c.t - a.mono
 	if a.restored {
 		a.a.DurationSec = -1 // spans a restart; duration on one mono clock is meaningless
+	}
+	if (code == CodeOutage || code == CodeRestarted) && c.outage.Detected {
+		// What matters about an outage is how long control was away, not how long the
+		// alarm stayed listed: -1 only when that is not known (integration defect 6).
+		a.a.DurationSec = -1
+		if c.outage.DurationOK {
+			a.a.DurationSec = c.outage.Duration.Seconds()
+		}
 	}
 	c.al.history = append(c.al.history, a.a)
 	const histCap = 5000
@@ -664,7 +683,7 @@ func (c *Core) escalate(a *activeAlarm, sev api.Severity) {
 // that is still happening. They signal once and stay listed until acknowledged.
 func isEventAlarm(code string) bool {
 	switch code {
-	case CodeOutage, CodeCureFinished, CodeWeightStep, CodeLogDamage, CodeStateLost, CodeOutDropped:
+	case CodeOutage, CodeRestarted, CodeCureFinished, CodeWeightStep, CodeLogDamage, CodeStateLost, CodeOutDropped:
 		return true
 	}
 	return false
@@ -761,7 +780,9 @@ func (c *Core) updateBuzzer() {
 func (c *Core) activeList() []api.Alarm {
 	out := make([]api.Alarm, 0, len(c.al.order))
 	for _, code := range c.al.order {
-		out = append(out, c.al.active[code].a)
+		a := c.al.active[code].a
+		a.Event = isEventAlarm(code)
+		out = append(out, a)
 	}
 	// Most severe first, then oldest.
 	rank := func(s api.Severity) int {
@@ -790,6 +811,9 @@ func (c *Core) replayEvents(evs []Event) {
 		case EvAlarm:
 			a := &api.Alarm{ID: e.ID, Code: e.Code, Severity: api.Severity(e.Sev), Title: e.Title, Action: e.Action,
 				Since: e.Wall, Peak: e.Peak, Limit: e.Limit, Unit: e.Unit, ClockOK: e.ClkOK}
+			if !e.Since.IsZero() {
+				a.Since = e.Since
+			}
 			if _, dup := byID[e.ID]; !dup {
 				ids = append(ids, e.ID)
 			}

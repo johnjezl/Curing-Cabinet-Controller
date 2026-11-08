@@ -2,9 +2,9 @@ package ui
 
 import (
 	"fmt"
-	"math"
 	"image"
 	"image/color"
+	"math"
 	"strings"
 
 	"github.com/johnjezl/curing-cabinet-controller/internal/api"

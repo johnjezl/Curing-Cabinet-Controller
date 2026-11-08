@@ -100,6 +100,10 @@ type Alarm struct {
 	// spanned a restart. Set when cleared.
 	ClockOK     bool    `json:"clock_ok"`
 	DurationSec float64 `json:"duration_sec,omitempty"`
+	// Event is true for something that happened (an outage, a restart, a finished
+	// recipe), as opposed to a condition that is still there. A panel ranks live
+	// conditions above events.
+	Event bool `json:"event,omitempty"`
 }
 
 // PhaseSpec is one stage of a cure recipe.
@@ -196,9 +200,10 @@ type Calibration struct {
 
 // Outage describes the most recent power loss seen across a restart.
 type Outage struct {
-	Detected    bool          `json:"detected"`
-	At          time.Time     `json:"at,omitzero"`
-	Duration    time.Duration `json:"duration"`
+	Detected bool      `json:"detected"`
+	At       time.Time `json:"at,omitzero"`
+	// Duration is written to JSON as duration_s, in seconds.
+	Duration    time.Duration `json:"-"`
 	DurationOK  bool          `json:"duration_ok"` // false if the clock could not be trusted
 	TempOnBackC float64       `json:"temp_on_back_c"`
 	// PeakTempC is the highest reading from return of power until the cabinet was
@@ -212,6 +217,8 @@ type Outage struct {
 	StartUncertaintySec float64 `json:"start_uncertainty_s"`
 	// Provisional is true while At and Duration rest on a clock not yet trusted.
 	Provisional bool `json:"provisional"`
+	// Cause is "power" (a new boot) or "restart" (only the process stopped).
+	Cause string `json:"cause,omitempty"`
 }
 
 // MarshalJSON writes unknown temperatures as null rather than 0.
@@ -219,9 +226,10 @@ func (o Outage) MarshalJSON() ([]byte, error) {
 	type plain Outage
 	v := struct {
 		plain
+		DurationSec float64  `json:"duration_s"`
 		TempOnBackC *float64 `json:"temp_on_back_c"`
 		PeakTempC   *float64 `json:"peak_temp_c"`
-	}{plain: plain(o)}
+	}{plain: plain(o), DurationSec: o.Duration.Seconds()}
 	if o.TempKnown {
 		v.TempOnBackC, v.PeakTempC = &o.TempOnBackC, &o.PeakTempC
 	}

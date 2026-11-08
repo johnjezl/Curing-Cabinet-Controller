@@ -137,6 +137,7 @@ const (
 	CodeAirHigh      = "AIR_HIGH"
 	CodeDoorOpen     = "DOOR_OPEN"
 	CodeOutage       = "POWER_OUTAGE"
+	CodeRestarted    = "CONTROLLER_RESTARTED"
 	CodeClimateFault = "SENSOR_CLIMATE_FAULT"
 	CodeTempSuspect  = "TEMP_SUSPECT"
 	CodeRHSuspect    = "RH_SUSPECT"
@@ -200,6 +201,9 @@ type State struct {
 	Version       int             `json:"version"`
 	Clean         bool            `json:"clean"` // set only by an orderly Close
 	BootCount     uint64          `json:"boot_count"`
+	// OSBootID is the operating system's boot ID at the last start. The same ID at
+	// the next start means only the process stopped, not the power (ADR 0409).
+	OSBootID string `json:"os_boot_id,omitempty"`
 	Manual        api.Setpoints   `json:"manual"`
 	Limits        api.Limits      `json:"limits"`
 	Cal           api.Calibration `json:"cal"`
@@ -302,6 +306,9 @@ type Event struct {
 	Unit   string    `json:"u,omitempty"`
 	Msg    string    `json:"x,omitempty"`
 	Dur    float64   `json:"d,omitempty"`
+	// Since, when set, is when the alarm's subject began, earlier than the event:
+	// an outage is raised on return but began at the loss.
+	Since time.Time `json:"sn,omitzero"`
 }
 
 // Event types.

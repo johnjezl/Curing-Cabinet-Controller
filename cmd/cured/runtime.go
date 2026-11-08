@@ -408,6 +408,7 @@ func runReal(ctx context.Context) error {
 		fs = osfs
 	}
 	c, err := core.New(core.Options{Cabinet: coreCab, Clock: clk, FS: fs, Speed: 1, Version: version, AsyncDepth: 256, Trace: traceBoot,
+		OSBootID: strings.TrimSpace(bootID()),
 		Watchdog: watchedWD{inner: wd, last: &lastPet, on: func(e error) {
 			if errors.Is(e, hal.ErrOutputsDropped) {
 				r.ann.Dropped()

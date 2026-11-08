@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -472,7 +473,8 @@ func runSim(ctx context.Context, o simOptions) error {
 			r.ann.Dropped()
 		}
 	}}
-	c, err := core.New(core.Options{Cabinet: cab, Clock: s.clk, FS: coreFS, Simulated: true, Speed: o.speed, Version: version, AsyncDepth: 1024, Watchdog: wdw, Trace: traceBoot})
+	c, err := core.New(core.Options{Cabinet: cab, Clock: s.clk, FS: coreFS, Simulated: true, Speed: o.speed, Version: version, AsyncDepth: 1024, Watchdog: wdw, Trace: traceBoot,
+		OSBootID: strings.TrimSpace(bootID())})
 	if err != nil {
 		return err
 	}

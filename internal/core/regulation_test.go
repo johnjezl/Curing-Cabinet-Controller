@@ -3,7 +3,9 @@ package core_test
 import (
 	"math"
 	"testing"
+	"time"
 
+	"github.com/johnjezl/curing-cabinet-controller/internal/api"
 	"github.com/johnjezl/curing-cabinet-controller/internal/sim"
 )
 
@@ -69,5 +71,84 @@ func TestHoldsEveryRecipeSetpoint(t *testing.T) {
 		if ph.t == 24 && heat/n < 0.05 {
 			t.Errorf("ferment: heater on in only %.1f %% of samples; this cabinet needs heat at 24 °C", 100*heat/n)
 		}
+	}
+}
+
+// Integration defect 8: after 5 kg was added the panel showed LOSS -46 %, and -36 % at
+// the end of the cure. The change is added to the start weight, so loss stays the mass
+// lost over all the mass that went in.
+func TestWeightLossRebasedOnALoadChange(t *testing.T) {
+	r := newRun(t)
+	sp := api.Setpoints{TempC: 13, RHPct: 76, AirMS: 1.0}
+	rc := api.Recipe{ID: "t", Name: "t", Phases: []api.PhaseSpec{{Name: "dry", Setpoint: sp, Duration: 10 * 24 * time.Hour}}}
+	if err := r.Core.Do(api.Command{Kind: api.CmdSaveRecipe, Recipe: &rc}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Core.Do(api.Command{Kind: api.CmdStart, RecipeID: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	r.Advance(3 * 86400)
+	before := r.Core.Snapshot().Program.WeightLossPct
+	if before <= 0.5 {
+		t.Fatalf("no loss to speak of before the load change: %.2f %%", before)
+	}
+	r.Plant.DoorIsOpen = true
+	r.Advance(60)
+	r.Plant.LoadProduct(5, 25)
+	r.Plant.DoorIsOpen = false
+	r.Advance(3600)
+	after := r.Core.Snapshot().Program.WeightLossPct
+	if after < 0 || after > before {
+		t.Fatalf("loss %.2f %% before 5 kg went in, %.2f %% after: want a figure between 0 and the old one", before, after)
+	}
+	r.Advance(2 * 86400)
+	if l := r.Core.Snapshot().Program.WeightLossPct; l <= after {
+		t.Fatalf("loss must keep growing after the change: %.2f %% then %.2f %%", after, l)
+	}
+}
+
+// Integration defect 6: the outage alarm was dated at the return, not the loss, its
+// history duration read -1, and service crashes were recorded as "Power was lost".
+func TestOutageRecordedFromTheLossWithItsCause(t *testing.T) {
+	for _, c := range []struct {
+		name, nextBoot, want string
+	}{{"process restart", "boot-a", "CONTROLLER_RESTARTED"}, {"power cut", "boot-b", "POWER_OUTAGE"}} {
+		t.Run(c.name, func(t *testing.T) {
+			p := sim.BasePlant()
+			r, err := sim.NewRun(sim.Options{Plant: p, KeepRows: true, SampleSec: 60, OSBootID: "boot-a"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.SetCal()
+			r.SetPoint(13, 76, 1.0)
+			r.Advance(6 * 3600)
+			lost := r.Core.Snapshot().Now
+			r.O.OSBootID = c.nextBoot
+			if err := r.PowerLoss(2*3600, 60); err != nil {
+				t.Fatal(err)
+			}
+			r.Advance(4 * 3600)
+			s := r.Core.Snapshot()
+			var got *api.Alarm
+			for _, list := range [][]api.Alarm{s.Active, s.History} {
+				for i := range list {
+					if list[i].Code == "POWER_OUTAGE" || list[i].Code == "CONTROLLER_RESTARTED" {
+						got = &list[i]
+					}
+				}
+			}
+			if got == nil || got.Code != c.want {
+				t.Fatalf("want %s, got %+v", c.want, got)
+			}
+			if d := got.Since.Sub(lost); d < -2*time.Minute || d > 2*time.Minute {
+				t.Errorf("dated %v, %v from the loss; want the loss", got.Since, d)
+			}
+			if !got.Cleared.IsZero() && (got.DurationSec < 7000 || got.DurationSec > 7600) {
+				t.Errorf("history duration %.0f s for a 7200 s outage", got.DurationSec)
+			}
+			if s.Health.LastOutage.Cause == "" {
+				t.Error("outage record has no cause")
+			}
+		})
 	}
 }

@@ -32,6 +32,9 @@ type Options struct {
 	AsyncDepth int
 	// Trace, if set, is called with every event as it is created.
 	Trace func(Event)
+	// OSBootID is the operating system's boot ID, empty if not known. An unclean
+	// stop within the same boot was the process, not the power.
+	OSBootID string
 }
 
 // DefaultLimits are the alarm limits a new cabinet starts with.
@@ -90,6 +93,8 @@ type Core struct {
 	scaleImplausible                              bool
 	lossHoldT                                     float64
 	weightStepT                                   float64
+	weightBefore                                  float64 // filtered weight just before an accepted step
+	rebasePending                                 bool
 	logDamageUntil                                float64
 
 	coolRunStart, coolRunT0, coolBest  float64
@@ -127,6 +132,7 @@ type Core struct {
 	// outputs
 	fanOut, lastFanOut  float64
 	alarmOut, buzzerOut bool
+	outageCode          string // POWER_OUTAGE, or CONTROLLER_RESTARTED when only the process stopped
 	applied             map[hal.OutputID]bool
 	reassertT           float64
 	outputErr           string
@@ -331,11 +337,20 @@ func (c *Core) boot(rec Recovered) {
 		c.st.BadLinesSeen = uint64(rec.BadEvents + rec.BadLog)
 	}
 
+	sameBoot := c.opts.OSBootID != "" && c.st.OSBootID == c.opts.OSBootID
+	c.st.OSBootID = c.opts.OSBootID
+	c.outageCode = CodeOutage
+	if sameBoot {
+		c.outageCode = CodeRestarted
+	}
 	if !first && !wasClean {
 		// Power failed or the process died.
 		// The stop happened after the last durable record, at most one log interval
 		// later. Duration is measured from that record, so it is an upper bound.
-		c.outage = api.Outage{Detected: true, At: lastWall, RecoverSec: -1, StartUncertaintySec: c.cfg.LogInterval, Provisional: true}
+		c.outage = api.Outage{Detected: true, At: lastWall, RecoverSec: -1, StartUncertaintySec: c.cfg.LogInterval, Provisional: true, Cause: "power"}
+		if sameBoot {
+			c.outage.Cause = "restart"
+		}
 		c.outagePending = true
 		if lastOK && c.clockOK && now.After(lastWall) {
 			c.outage.Duration = now.Sub(lastWall)
@@ -365,10 +380,12 @@ func (c *Core) boot(rec Recovered) {
 			dur = c.outage.Duration.Seconds()
 		}
 		c.event(Event{Type: EvOutage, Msg: msg, Dur: dur})
-		// A restored alarm from before the outage is closed; this is a new one.
+		// A restored alarm from before the outage is closed; this is a new one. It is
+		// dated from the loss, not the return (integration defect 6).
 		c.clear(CodeOutage)
-		c.raise(CodeOutage, math.Inf(-1), 0)
-		if a := c.al.active[CodeOutage]; a != nil {
+		c.clear(CodeRestarted)
+		c.raiseSince(c.outageCode, math.Inf(-1), 0, lastWall, lastOK && c.outage.DurationOK)
+		if a := c.al.active[c.outageCode]; a != nil {
 			a.a.Peak = 0
 		}
 		// Whether this matters is known only once the cabinet is seen again, so it
@@ -380,6 +397,7 @@ func (c *Core) boot(rec Recovered) {
 		// A clean stop is not an outage. A record restored from an earlier outage
 		// stays in history but is no longer an active alarm.
 		c.clear(CodeOutage)
+		c.clear(CodeRestarted)
 	}
 	c.saveReq = true
 	c.flush()
@@ -729,6 +747,9 @@ func (c *Core) ingest(in inputs, dt float64) {
 		if before >= 3 && c.chScale.n == 1 {
 			// Three agreeing samples at a new level: something really changed.
 			c.weightStepT = t
+			if c.weightF.init && c.scaleCal() {
+				c.weightBefore, c.rebasePending = c.weightF.v, true
+			}
 			c.crossReset()
 			c.scaleRawF.reset()
 			c.wt = weightTrack{}
@@ -743,6 +764,10 @@ func (c *Core) ingest(in inputs, dt float64) {
 		if c.scaleCal() {
 			g := (raw - float64(cal.ScaleZero)) / cal.ScaleCountsPG
 			c.weightF.v, c.weightF.init = g, true
+			if c.rebasePending {
+				c.rebasePending = false
+				c.rebaseLoss(g - c.weightBefore)
+			}
 		}
 	}
 	c.updateWeight(t)
@@ -831,7 +856,7 @@ func (c *Core) updateOutageRecord() {
 		if v > c.outage.PeakTempC {
 			c.outage.PeakTempC = v
 		}
-		if a := c.al.active[CodeOutage]; a != nil {
+		if a := c.al.active[c.outageCode]; a != nil {
 			a.a.Peak = c.outage.PeakTempC
 			set := c.setpoint()
 			if c.outage.PeakTempC > lim.AbsTempHighC || (set.TempC < 15.6 && c.outage.PeakTempC > 15.6) {
@@ -849,7 +874,7 @@ func (c *Core) updateOutageRecord() {
 		if settled {
 			c.outage.RecoverSec = t - c.bootT
 		}
-		a := c.al.active[CodeOutage]
+		a := c.al.active[c.outageCode]
 		peakTxt := "peak unknown: no valid reading"
 		if c.outage.TempKnown {
 			peakTxt = fmt.Sprintf("peak %.1f C", c.outage.PeakTempC)
@@ -860,7 +885,7 @@ func (c *Core) updateOutageRecord() {
 		switch {
 		case a == nil:
 		case a.a.Acked || (short && peakOK):
-			c.clear(CodeOutage)
+			c.clear(c.outageCode)
 		case !peakOK || !c.outage.DurationOK || c.outage.Duration >= time.Hour:
 			// Over the band on return, unknown length or long: worth telling someone.
 			c.escalate(a, maxSev(a.a.Severity, api.SevWarning))
@@ -1163,7 +1188,9 @@ func (c *Core) Snapshot() api.Snapshot {
 	}
 	s.History = make([]api.Alarm, 0, n-start)
 	for i := n - 1; i >= start; i-- {
-		s.History = append(s.History, c.al.history[i])
+		h := c.al.history[i]
+		h.Event = isEventAlarm(h.Code)
+		s.History = append(s.History, h)
 	}
 	s.BuzzerSilenced = c.al.silenced
 	s.Trend = c.trendView()
@@ -1506,7 +1533,7 @@ func (c *Core) do(cmd api.Command) error {
 					a.ackT = c.t
 					c.event(Event{Type: EvAck, Code: code, ID: a.a.ID})
 				}
-				if code == CodeOutage && !c.outagePending {
+				if (code == CodeOutage || code == CodeRestarted) && !c.outagePending {
 					c.clear(code)
 				}
 				if code == CodeWeightStep {

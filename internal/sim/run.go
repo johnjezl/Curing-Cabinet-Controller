@@ -134,6 +134,9 @@ type Options struct {
 	Events io.Writer
 	NTP    float64 // seconds after each boot until the clock is right, no RTC only
 	Seed   uint64
+	// OSBootID is passed to core at each boot; the same ID across a PowerLoss makes it
+	// a process restart rather than a power cut, as on a real machine.
+	OSBootID string
 }
 
 // Run is one simulation.
@@ -204,7 +207,7 @@ func (r *Run) boot() error {
 	if r.Guard == nil {
 		r.Guard = &SimGuard{pl: r.Plant}
 	}
-	c, err := core.New(core.Options{Cabinet: r.Plant.Cabinet(), Clock: r.Clock, FS: r.FS, Config: r.O.Config, Simulated: true, Speed: 0, Watchdog: r.Guard,
+	c, err := core.New(core.Options{Cabinet: r.Plant.Cabinet(), Clock: r.Clock, FS: r.FS, Config: r.O.Config, Simulated: true, Speed: 0, Watchdog: r.Guard, OSBootID: r.O.OSBootID,
 		Trace: func(e core.Event) {
 			kind := e.Type
 			r.logEv(Ev{T: r.Clock.VT, Kind: kind, Code: e.Code, Sev: e.Sev, Msg: strings.TrimSpace(e.Title + " " + e.Msg)})

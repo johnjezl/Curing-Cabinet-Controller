@@ -46,10 +46,13 @@ Option 3:
 | Compressor does not cool | COOL_NO_EFFECT 39 min | | | none |
 | Room +12 °C, room -10 °C, 5 kg warm load, recovery after compressor repair or output fault | none | none | none | none |
 
-Across the 36-plant sweep: heater stuck identified on 31/36 (13 °C) and 26/36 (24 °C) plants, median about 100 min;
-humidifier 20/36 and 27/36, median 30 to 37 min; compressor 33/36 and 15/36. Wrong accusations remain on weak plants:
-HEAT_STUCK_ON on 3/36 in a room raised by 12 °C and on 8/36 recovering slowly from a compressor repair in that room;
-COOL_STUCK_ON on 2 to 4 with a stuck humidifier. Sensor drift detection is unchanged from before this ADR.
+Across the 36-plant sweep (2 days at setpoint, 12 h observed): heater stuck identified on 31/36 plants at 13 °C,
+26/36 at 24 °C and 29/36 at 4 °C, median 28 to 110 min; humidifier on 24, 29 and 31 of 36, median 28 to 47 min;
+compressor on 33, 15 and 29 of 36. No healthy plant, cold room or warm load raised an equipment alarm, except one
+COOL_STUCK_ON in a cold room and one HEAT_STUCK_ON after a warm load, both at 4 °C. Wrong accusations remain on weak
+plants: HEAT_STUCK_ON on 1 to 4 of 36 in a room raised by 12 °C and on 4 to 8 of 36 recovering slowly from a compressor
+repair in that room; COOL_STUCK_ON on 3 to 5 with a stuck humidifier. Sensor drift detection is unchanged from before
+this ADR.
 
 ## Consequences
 - The sensor suspicion still fires for a sharp room change (240 to 360 min after +6 to +12 °C on the simulator's plant),

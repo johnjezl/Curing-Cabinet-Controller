@@ -32,21 +32,36 @@ type Status struct {
 	Screen   screenID
 }
 
+// sortAlarms puts first what an operator must act on now: live critical conditions,
+// then an open door (usually the cause of whatever else is out), then live warnings,
+// then past events of any severity, newest first (the end of a cure is news; an old
+// restart burst is not), and standing information last. An old event must never
+// headline over a live excursion (integration defect 9).
 func sortAlarms(in []api.Alarm) []api.Alarm {
 	out := append([]api.Alarm(nil), in...)
-	rank := func(s api.Severity) int {
-		switch s {
-		case api.SevCritical:
+	rank := func(a api.Alarm) int {
+		switch {
+		case a.Event:
+			return 3
+		case a.Severity == api.SevInfo:
+			return 4
+		case a.Severity == api.SevCritical:
 			return 0
-		case api.SevWarning:
+		case a.Code == "DOOR_OPEN":
 			return 1
 		}
 		return 2
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i], out[j]
-		if rank(a.Severity) != rank(b.Severity) {
-			return rank(a.Severity) < rank(b.Severity)
+		if rank(a) != rank(b) {
+			return rank(a) < rank(b)
+		}
+		if a.Event {
+			return a.Since.After(b.Since) // the newest event is the news
+		}
+		if a.Severity != b.Severity {
+			return a.Severity == api.SevCritical
 		}
 		if a.Acked != b.Acked {
 			return !a.Acked

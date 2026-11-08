@@ -57,7 +57,9 @@ make_tree() {
 sandbox() {
   local uid; uid=$(id -u)
   # The private /tmp would hide a bench directory under /tmp, so $L is bound back.
-  echo /usr/bin/bwrap --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --bind "$L" "$L" \
+  # No --die-with-parent: systemd signals the whole cgroup on stop, bwrap dies at once,
+  # and that option would then SIGKILL cured in the middle of its orderly shutdown.
+  echo /usr/bin/bwrap --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --bind "$L" "$L" \
     --tmpfs /run --bind "/run/user/$uid" "/run/user/$uid" \
     --bind "$L/run" /run/curing-cured --bind "$L/hwrun" /run/curing --bind "$L/guard" /run/curing-outputs \
     --ro-bind "$L/sync" /run/systemd/timesync \
