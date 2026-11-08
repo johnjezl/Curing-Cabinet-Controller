@@ -197,6 +197,16 @@ func (s *sysAlarms) Raise(code string, sev api.Severity, title, action string) {
 	s.save()
 }
 
+// SetPeak records the worst figure an active alarm has seen.
+func (s *sysAlarms) SetPeak(code string, v float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a, ok := s.active[code]; ok && v > a.Peak {
+		a.Peak = v
+		s.save()
+	}
+}
+
 // Clear ends the condition.
 func (s *sysAlarms) Clear(code string) {
 	s.mu.Lock()

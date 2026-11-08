@@ -183,8 +183,10 @@ func TestHeadlineRanksLiveConditionsOverEvents(t *testing.T) {
 	al := func(code string, sev api.Severity, event bool, at time.Duration) api.Alarm {
 		return api.Alarm{ID: code, Code: code, Severity: sev, Event: event, Since: t0.Add(at)}
 	}
+	seen := al("OUTPUTS_DROPPED", api.SevCritical, true, 0)
+	seen.Acked = true
 	got := sortAlarms([]api.Alarm{
-		al("OUTPUTS_DROPPED", api.SevCritical, true, 0),
+		seen,
 		al("CONTROLLER_RESTART_LOOP", api.SevCritical, true, time.Hour),
 		al("TEMP_LOW", api.SevWarning, false, 2*time.Hour),
 		al("DOOR_OPEN", api.SevWarning, false, 3*time.Hour),
@@ -195,7 +197,9 @@ func TestHeadlineRanksLiveConditionsOverEvents(t *testing.T) {
 	for _, a := range got {
 		order = append(order, a.Code)
 	}
-	want := []string{"TEMP_HIGH_CRITICAL", "DOOR_OPEN", "TEMP_LOW", "CURE_FINISHED", "CONTROLLER_RESTART_LOOP", "OUTPUTS_DROPPED"}
+	// An unacknowledged critical event comes before a newer, lesser one; one already
+	// acknowledged does not beat the end of the cure.
+	want := []string{"TEMP_HIGH_CRITICAL", "DOOR_OPEN", "TEMP_LOW", "CONTROLLER_RESTART_LOOP", "CURE_FINISHED", "OUTPUTS_DROPPED"}
 	if strings.Join(order, ",") != strings.Join(want, ",") {
 		t.Fatalf("order %v, want %v", order, want)
 	}

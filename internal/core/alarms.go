@@ -889,6 +889,11 @@ func (c *Core) replayEvents(evs []Event) {
 			if lastOutageID != "" && e.Dur > 0 && strings.HasPrefix(e.Msg, "duration resolved") {
 				subject[lastOutageID] = e.Dur
 			}
+			// The temperature on return is the least the peak was. If the next gap
+			// comes before the record closes, it is all the record has.
+			if a := byID[lastOutageID]; a != nil && a.Cleared.IsZero() && e.Peak != 0 && (a.Peak == 0 || e.Peak > a.Peak) {
+				a.Peak = e.Peak
+			}
 		case EvOutageEnd:
 			if a := byID[lastOutageID]; a != nil && a.Cleared.IsZero() {
 				a.Peak = e.Peak

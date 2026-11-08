@@ -259,9 +259,18 @@ func (r *runtime) noteStart() {
 	logfJ("<5>cured: starts within %.0f s: %d", restartWindow, len(keep))
 	if len(keep) >= restartThreshold {
 		// A burst of restarts is something that happened: it calls for 30 minutes or
-		// until acknowledged, and never holds the contact for the rest of a cure.
+		// until acknowledged, and never holds the contact for the rest of a cure. A
+		// reboot restarts the count, so a burst already on record keeps its larger
+		// figure.
+		n := len(keep)
+		for _, a := range r.sys.Active() {
+			if a.Code == CodeRestartLoop && int(a.Peak) > n {
+				n = int(a.Peak)
+			}
+		}
 		r.sys.RaiseEvent(CodeRestartLoop, api.SevCritical, "Controller keeps restarting",
-			fmt.Sprintf("The control service has started %d times in 10 minutes. Outputs drop on every restart. Check the journal.", len(keep)))
+			fmt.Sprintf("The control service has started %d times in 10 minutes. Outputs drop on every restart. Check the journal.", n))
+		r.sys.SetPeak(CodeRestartLoop, float64(n))
 	}
 }
 

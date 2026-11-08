@@ -47,3 +47,18 @@ Status: accepted. Fixes integration defects 6, 8 and 9. Amends ADR 0107 and ADR 
 - Weight loss: removing product scaled the start weight by the change instead of in proportion, crediting the remaining
   product with water the removed pieces had lost (5.6 % jumped to 7.0 %, the unsafe direction). A removal now scales the
   start weight by the share of the load that stays, so the figure does not jump; an addition still adds.
+
+## Revision after the second re-test (defects 6 and 8 passed)
+- Headline: an unacknowledged critical past event (a power outage, the restart burst) now comes before other past
+  events, which stay newest first. The re-test saw "Recipe finished" and "Controller stopped and restarted" headline
+  over an unacknowledged critical "Power was lost" and "Controller keeps restarting", hidden behind "+1 MORE". Integration
+  defect 3's case, an acknowledged old burst over the end of the cure, still goes the other way.
+- An outage's peak survives a second gap before its record closes: the temperature on return, already journalled, is
+  restored as the peak, the least it can have been. Before, the history entry had none.
+- An orderly restart no longer takes an unacknowledged outage alarm off the list: like every event, it stays until
+  acknowledged.
+- The load-change event gives the loss before and after the change from the weights on either side of the step
+  ("0.7 % before the change, 0.5 % after"), instead of the filtered weight, which had already moved (it read -49.4 %).
+- The restart-burst alarm keeps the largest count it has reported: a reboot restarts the count, and the record had
+  dropped from 8 to 4.
+

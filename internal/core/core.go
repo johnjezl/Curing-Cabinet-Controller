@@ -401,12 +401,8 @@ func (c *Core) boot(rec Recovered) {
 	} else if c.outage.Detected == false && rec.HaveState {
 		c.outage = api.Outage{}
 	}
-	if wasClean {
-		// A clean stop is not an outage. A record restored from an earlier outage
-		// stays in history but is no longer an active alarm.
-		c.clear(CodeOutage)
-		c.clear(CodeRestarted)
-	}
+	// A clean stop is not an outage, and it does not end one: an outage alarm restored
+	// unacknowledged stays listed until someone acknowledges it, as every event does.
 	c.saveReq = true
 	c.flush()
 }

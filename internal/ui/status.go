@@ -34,17 +34,21 @@ type Status struct {
 
 // sortAlarms puts first what an operator must act on now: live critical conditions,
 // then an open door (usually the cause of whatever else is out), then live warnings,
-// then past events of any severity, newest first (the end of a cure is news; an old
-// restart burst is not), and standing information last. An old event must never
-// headline over a live excursion (integration defect 9).
+// then critical past events nobody has acknowledged yet, then other past events newest
+// first (the end of a cure is news; an old restart burst already seen is not), and
+// standing information last. An old event must never headline over a live excursion
+// (integration defect 9), and a critical one must not hide behind a newer warning
+// until someone has seen it (its re-test).
 func sortAlarms(in []api.Alarm) []api.Alarm {
 	out := append([]api.Alarm(nil), in...)
 	rank := func(a api.Alarm) int {
 		switch {
-		case a.Event:
+		case a.Event && a.Severity == api.SevCritical && !a.Acked:
 			return 3
-		case a.Severity == api.SevInfo:
+		case a.Event:
 			return 4
+		case a.Severity == api.SevInfo:
+			return 5
 		case a.Severity == api.SevCritical:
 			return 0
 		case a.Code == "DOOR_OPEN":

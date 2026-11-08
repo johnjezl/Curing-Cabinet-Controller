@@ -363,6 +363,18 @@ func (r *Run) PowerLoss(sec float64, ntp float64) error {
 	return r.boot()
 }
 
+// Restart stops the controller cleanly and starts it again, as an orderly service
+// restart does: same OS boot, no power lost.
+func (r *Run) Restart() error {
+	if r.Core != nil {
+		if err := r.Core.Close(); err != nil {
+			return err
+		}
+	}
+	r.logEv(Ev{T: r.Clock.VT, Kind: "scenario", Msg: "orderly restart"})
+	return r.boot()
+}
+
 // SetCal puts the scale in calibration without going through a tare.
 func (r *Run) SetCal(extra ...func(*api.Calibration)) {
 	if r.Core == nil {

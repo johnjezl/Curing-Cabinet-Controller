@@ -233,3 +233,59 @@ func TestWeightLossDoesNotJumpWhenProductIsRemoved(t *testing.T) {
 		t.Fatalf("loss %.2f %% before removing product, %.2f %% after: it must not jump", before, after)
 	}
 }
+
+// Re-test of defect 6, follow-ups: a gap that comes before the last outage's record closed
+// must not lose that outage's temperature, and an orderly restart does not take an
+// unacknowledged outage off the list.
+func TestOutagePeakKeptAcrossAQuickSecondGapAndAnOrderlyRestart(t *testing.T) {
+	r, err := sim.NewRun(sim.Options{Plant: sim.BasePlant(), KeepRows: true, SampleSec: 60, OSBootID: "boot-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.SetCal()
+	r.SetPoint(13, 76, 1.0)
+	r.Advance(6 * 3600)
+	r.O.OSBootID = "boot-b"
+	// Long enough to warm, short enough to stay under the critical line (15.6 °C), so
+	// nothing but the return reading carries the peak.
+	if err := r.PowerLoss(1200, 60); err != nil {
+		t.Fatal(err)
+	}
+	r.Advance(60) // the first reading is in; the record is still open
+	r.O.OSBootID = "boot-c"
+	if err := r.PowerLoss(120, 60); err != nil {
+		t.Fatal(err)
+	}
+	r.Advance(3600)
+	s := r.Core.Snapshot()
+	var first *api.Alarm
+	for i, a := range s.History {
+		if a.Code == "POWER_OUTAGE" && (first == nil || a.Since.Before(first.Since)) {
+			first = &s.History[i]
+		}
+	}
+	if first == nil {
+		t.Fatal("the first outage is not in history")
+	}
+	if first.Peak < 13.2 || first.Severity == api.SevCritical {
+		t.Errorf("first outage: %s, peak %.1f °C; want a warning with the temperature on return", first.Severity, first.Peak)
+	}
+	listed := func() bool {
+		for _, a := range r.Core.Snapshot().Active {
+			if a.Code == "POWER_OUTAGE" {
+				return true
+			}
+		}
+		return false
+	}
+	if !listed() {
+		t.Fatal("the second outage is not listed")
+	}
+	if err := r.Restart(); err != nil {
+		t.Fatal(err)
+	}
+	r.Advance(600)
+	if !listed() {
+		t.Error("an orderly restart took an unacknowledged outage off the list")
+	}
+}

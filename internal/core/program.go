@@ -160,7 +160,15 @@ func (c *Core) rebaseLoss(before, after float64) {
 	if p.State == api.RunIdle || p.StartWeightG <= 0 {
 		return
 	}
-	lossBefore := c.lossPct()
+	// What the figure was before the step, from the weight before it: the filtered
+	// weight has already moved, and against the old start weight it reads as nonsense.
+	lossOf := func(start, w float64) float64 {
+		if start <= 0 {
+			return 0
+		}
+		return (start - w) / start * 100
+	}
+	lossBefore := lossOf(p.StartWeightG, before)
 	delta := after - before
 	if delta >= 0 || before <= 0 {
 		p.StartWeightG += delta
@@ -170,7 +178,7 @@ func (c *Core) rebaseLoss(before, after float64) {
 	if p.StartWeightG < 100 {
 		p.StartWeightG = 0
 	}
-	c.event(Event{Type: EvPhase, Msg: fmt.Sprintf("load changed by %+.0f g: weight loss re-based on the new load (%.1f %% before, start weight now %.0f g)", delta, lossBefore, p.StartWeightG)})
+	c.event(Event{Type: EvPhase, Msg: fmt.Sprintf("load changed by %+.0f g: weight loss re-based on the new load (%.1f %% before the change, %.1f %% after; start weight now %.0f g)", delta, lossBefore, lossOf(p.StartWeightG, after), p.StartWeightG)})
 	c.saveSoon()
 }
 
