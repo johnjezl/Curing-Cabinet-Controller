@@ -224,10 +224,20 @@ func blindNote(s *api.Snapshot, stalled bool) (tempBlind, rhBlind bool, note str
 }
 
 // deviation words an out-of-band reading that has not yet alarmed.
+// deviation names a reading outside its alarm band before the alarm delay is over.
+// It judges the few-minute average when the core gives one: a compressor run dips
+// humidity by a dozen percent for a few minutes, and that is not a deviation to report
+// (integration defect 7, re-test). The digits still show the instant value.
 func deviation(s *api.Snapshot) string {
+	val := func(r api.Reading) float64 {
+		if r.Avg != 0 && finite(r.Avg) {
+			return r.Avg
+		}
+		return r.Value
+	}
 	var parts []string
 	if readingGood(s.Temp) && !s.Outputs.Defrost {
-		d := s.Temp.Value - s.Setpoint.TempC
+		d := val(s.Temp) - s.Setpoint.TempC
 		if s.Limits.TempHighDelta > 0 && d > s.Limits.TempHighDelta {
 			parts = append(parts, fmt.Sprintf("TEMP %.1f °C ABOVE SET", d))
 		}
@@ -236,7 +246,7 @@ func deviation(s *api.Snapshot) string {
 		}
 	}
 	if readingGood(s.RH) {
-		d := s.RH.Value - s.Setpoint.RHPct
+		d := val(s.RH) - s.Setpoint.RHPct
 		if s.Limits.RHHighDelta > 0 && d > s.Limits.RHHighDelta {
 			parts = append(parts, fmt.Sprintf("HUMIDITY %.0f %% ABOVE SET", d))
 		}

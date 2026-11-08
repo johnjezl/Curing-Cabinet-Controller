@@ -1153,6 +1153,12 @@ func (c *Core) Snapshot() api.Snapshot {
 	}
 	s.Temp = reading(c.chT, tv, t)
 	s.RH = reading(c.chRH, rv, t)
+	if c.tS.init {
+		s.Temp.Avg = c.tS.v
+	}
+	if c.rhS.init {
+		s.RH.Avg = c.rhS.v
+	}
 	// A suspicion shows on the reading. Control goes on using it.
 	if c.st.TDoubtUntil != 0 && s.Temp.Quality == api.QualityOK {
 		s.Temp.Quality, s.Temp.Note = api.QualitySuspect, "disagrees with how the cabinet is behaving; check with a separate thermometer"
@@ -1346,8 +1352,10 @@ func (c *Core) outputStatus() []api.OutputStatus {
 		hum = st(hu, false, "hold", "settling after power-on")
 	case c.st.TDoubtUntil != 0 || c.st.RHDoubtUntil != 0:
 		hum = st(hu, false, "hold", "locked off while a reading is in doubt")
-	case c.rhF.v >= set.RHPct && ctl.dehum:
+	case c.rhF.v >= set.RHPct && ctl.dehum && ctl.comp.on:
 		hum = st(hu, false, "normal", fmt.Sprintf("%.0f %% over setpoint: the compressor is removing moisture", c.rhF.v-set.RHPct))
+	case c.rhF.v >= set.RHPct && ctl.dehum:
+		hum = st(hu, false, "normal", fmt.Sprintf("%.0f %% over setpoint: the next compressor run will remove moisture", c.rhF.v-set.RHPct))
 	case c.rhF.v >= set.RHPct:
 		hum = st(hu, false, "normal", "at or over setpoint")
 	case t < ctl.humNext:

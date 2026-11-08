@@ -39,3 +39,7 @@ band if that is narrower), and "IN RANGE" is shown only when both readings are i
 "OK: NO ALARMS". The amber "no alarm yet" headline still waits for the alarm band, so a compressor run's normal humidity
 swing colours the digits but does not take the headline. The output reasons state the error of the number on the panel,
 not of the slower average the loop acts on, and say what the output is doing about it (ADR 0101).
+After the second re-test: the amber "no alarm yet" headline judges the few-minute average the loop acts on
+(`Reading.Avg`), so a compressor run's passing dip of a dozen percent no longer raises "HUMIDITY 11 % BELOW SET"; the
+digits still show, and colour, the instant value. The humidity reason says "the next compressor run will remove
+moisture" while dehumidifying between runs, instead of claiming the compressor is running.

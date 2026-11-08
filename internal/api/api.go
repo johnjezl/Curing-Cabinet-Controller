@@ -33,6 +33,10 @@ type Reading struct {
 	Quality Quality `json:"quality"`
 	AgeSec  float64 `json:"age_sec"`
 	Note    string  `json:"note,omitempty"`
+	// Avg is the few-minute average the control loop acts on, 0 if not given. A
+	// panel uses it for a "no alarm yet" headline, so a compressor run's passing dip
+	// does not raise one, and shows Value.
+	Avg float64 `json:"avg,omitempty"`
 }
 
 type Setpoints struct {

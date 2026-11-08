@@ -102,3 +102,12 @@ setpoint except where its sensor bias (±1 °C in the sweep) now shows, because 
   true RH was within ±5 % in 73 to 86 % of samples per phase, every hourly mean inside. The humidifier ran 1.5 % of the
   time in Ferment, so capacity is not the limit; each compressor run dries the cabinet's small volume of air by several
   percent, and runs are already as short and as far apart as the protection timers allow.
+- Second re-test of defect 7: RH means on setpoint and every 30-minute mean within ±5 %, but instantaneous true RH
+  within ±5 % only 68 % (Dry) to 90 % (Ferment) of the time. The critic traced the swing to the plant: each minimum
+  2-minute compressor run takes RH down 12 to 14 % in a cabinet whose air holds 3 to 7 g of water, and in drying the
+  compressor already starts every 8 minutes, the start-spacing limit. Two changes were measured and dropped because they
+  did not move the instantaneous figure: the humidifier answering a 30-minute mean (humidifier closures 86 to 66 a day in
+  Ferment, share within ±5 % 90 to 88 %), and a dehumidify gain of 0.04 or 0.06 instead of 0.02 (Dry 68 to 70-71 %,
+  Ferment 90 to 87 %). Holding ±5 %RH at every instant needs a smaller dehumidifying step than a whole compressor run: a
+  dedicated dehumidifier (`DehumidFitted`, output `dehum`) or a variable-speed compressor. With this hardware the band
+  holds on averages over a compressor cycle or longer, not at every instant.

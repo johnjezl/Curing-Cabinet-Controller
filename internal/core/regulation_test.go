@@ -28,9 +28,9 @@ func TestHoldsEveryRecipeSetpoint(t *testing.T) {
 	}{{"ferment", 24, 90, 2}, {"dry early", 14, 82, 3}, {"dry", 13, 76, 3}, {"override", 15, 78, 2}} {
 		r.SetPoint(ph.t, ph.rh, 1.0)
 		r.Rows = nil
-		h0 := r.Plant.HeatCycles()
+		h0, u0 := r.Plant.HeatCycles(), r.Plant.HumidCycles()
 		r.Advance(ph.days * 86400)
-		var n, in1, heat, sumT, sumRH float64
+		var n, in1, in5, heat, sumT, sumRH float64
 		var hourT, hourRH, hourN float64
 		var hoursOut, hours int
 		t0 := r.Rows[0].T
@@ -43,6 +43,9 @@ func TestHoldsEveryRecipeSetpoint(t *testing.T) {
 			sumRH += x.TrueRH
 			if math.Abs(x.TrueT-ph.t) <= 1 {
 				in1++
+			}
+			if math.Abs(x.TrueRH-ph.rh) <= 5 {
+				in5++
 			}
 			if x.HeatEff {
 				heat++
@@ -58,8 +61,9 @@ func TestHoldsEveryRecipeSetpoint(t *testing.T) {
 		}
 		mT, mRH := sumT/n, sumRH/n
 		closures := float64(r.Plant.HeatCycles()-h0) / ph.days
-		t.Logf("%-9s set %4.1f/%2.0f: mean %.2f °C %.1f %%, %.0f %% of samples within 1 °C, %d of %d hourly means out of band, heater %.0f %% of samples, %.0f closures/day",
-			ph.name, ph.t, ph.rh, mT, mRH, 100*in1/n, hoursOut, hours, 100*heat/n, closures)
+		humClosures := float64(r.Plant.HumidCycles()-u0) / ph.days
+		t.Logf("%-9s set %4.1f/%2.0f: mean %.2f °C %.1f %%, %.0f %% of samples within 1 °C, %.0f %% within 5 %%RH, %d of %d hourly means out of band, heater %.0f %% of samples, %.0f closures/day, humidifier %.0f closures/day",
+			ph.name, ph.t, ph.rh, mT, mRH, 100*in1/n, 100*in5/n, hoursOut, hours, 100*heat/n, closures, humClosures)
 		if math.Abs(mT-ph.t) > 0.3 || math.Abs(mRH-ph.rh) > 1.5 {
 			t.Errorf("%s: mean %.2f °C / %.1f %% against %.1f / %.0f", ph.name, mT, mRH, ph.t, ph.rh)
 		}
