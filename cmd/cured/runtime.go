@@ -73,6 +73,9 @@ type runtime struct {
 	c       *core.Core
 	safeCfg drivers.Config
 	statusX func() any
+	// linesDriven is false in simulation: the contact and buzzer states in the
+	// status are the simulated decision, and no real line follows them.
+	linesDriven bool
 
 	ticks      atomic.Uint64
 	lastTick   atomic.Int64
@@ -277,6 +280,7 @@ func (r *runtime) statusMap() map[string]any {
 		"control_last_tick_age_s": time.Since(time.Unix(0, r.lastTick.Load())).Seconds(), "frames": r.frames.Load(),
 		"last_frame_age_s": time.Since(time.Unix(0, r.lastFrame.Load())).Seconds(),
 		"alarm_armed":      armed, "alarm_contact_closed": closed, "buzzer_on": buzz, "system_alarms": r.sys.Codes(),
+		"annunciator_lines_driven": r.linesDriven,
 	}
 	if r.statusX != nil {
 		m["sim"] = r.statusX()
@@ -339,7 +343,7 @@ func traceBoot(e core.Event) {
 // runReal runs against the real cabinet.
 func runReal(ctx context.Context) error {
 	start := time.Now()
-	r := &runtime{mode: "real", started: start, upStart: uptimeNow(), safeCfg: drivers.DefaultConfig()}
+	r := &runtime{mode: "real", started: start, upStart: uptimeNow(), safeCfg: drivers.DefaultConfig(), linesDriven: true}
 	r.lastTick.Store(start.UnixNano())
 	logfJ("<5>cured: start mode=real version=%s uptime=%.3f", version, r.upStart)
 	_ = os.Remove(simSock) // a socket left by a simulator has no business here

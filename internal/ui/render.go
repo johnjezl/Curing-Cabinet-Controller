@@ -198,8 +198,12 @@ func levelColors(l Level) (bg, fg color.RGBA) {
 // drawHeader is the one-line banner on every screen but alarm-state Home: the
 // overall state never leaves the screen, whatever menu is open.
 func (p *Panel) drawHeader(c *Canvas, st Status, title string) {
+	p.drawHeaderIn(c, st, title, rect(mX, headTop, mR, headBot))
+}
+
+// drawHeaderIn draws the header in r, which the home screen moves down in simulation.
+func (p *Panel) drawHeaderIn(c *Canvas, st Status, title string, r image.Rectangle) {
 	bg, fg := levelColors(st.Level)
-	r := rect(mX, headTop, mR, headBot)
 	c.Round(r, 6, bg)
 	x := r.Min.X + 10
 	if title != "" {
@@ -269,6 +273,29 @@ func (p *Panel) drawSimPill(c *Canvas, x int, r image.Rectangle, compact bool) i
 	c.Round(box, 4, colSim)
 	c.Text(box, label, Style{Font: FontBold, Size: 22, Color: colText, H: Center})
 	return x - w - 8
+}
+
+// simBandH is the height the home screen gives the simulation band, gap included.
+const simBandH = 24
+
+// drawSimBand is the full-width simulation marker at the top of the home screen.
+// The hatched ends match the frame; the words say what is and is not real.
+func (p *Panel) drawSimBand(c *Canvas, r image.Rectangle) {
+	c.Fill(r, colSim)
+	label := "SIMULATION"
+	if f := p.snap.Health.SpeedFactor; finite(f) && f > 1 {
+		label += fmt.Sprintf(" ×%.0f", f)
+	}
+	label += " · NOT A REAL CABINET · SIMULATED CLOCK"
+	st := Style{Font: FontBold, Size: 19, Color: colText, H: Center, MinSize: 13}
+	w := getFace(FontBold, 19).measure(label) + 24
+	if w > r.Dx()-40 {
+		w = r.Dx() - 40
+	}
+	mid := (r.Min.X + r.Max.X) / 2
+	c.Hatch(rect(r.Min.X, r.Min.Y, mid-w/2, r.Max.Y), 18, 9, colSimLite)
+	c.Hatch(rect(mid+w/2, r.Min.Y, r.Max.X, r.Max.Y), 18, 9, colSimLite)
+	c.Text(rect(mid-w/2, r.Min.Y, mid+w/2, r.Max.Y), label, st)
 }
 
 func (p *Panel) drawSimFrame(c *Canvas) {

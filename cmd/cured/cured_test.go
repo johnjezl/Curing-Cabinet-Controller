@@ -207,16 +207,14 @@ func TestLineFilterKeepsAnnunciatorLinesFromHardware(t *testing.T) {
 	}
 }
 
-func TestAlarmOnlyRefusesPlantOutputs(t *testing.T) {
-	r := &recLines{}
-	a := alarmOnly{r}
-	for _, id := range []hal.OutputID{hal.OutCool, hal.OutHeat, hal.OutHumid, hal.OutDehumid} {
-		if a.Set(id, true) == nil {
-			t.Fatalf("simulator reached %s", id)
-		}
-	}
-	if err := a.Set(hal.OutAlarm, true); err != nil {
+func TestSimulationRefusesToDriveAnnunciators(t *testing.T) {
+	a := []string{"--sim", "--speed", "400", "--sim-outage", "1x", "--sim-confirm=" + simConfirmToken, "--sim-annunciate"}
+	o, err := parseSimArgs(a)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if err := simGate(o, noFiles); err == nil || !strings.Contains(err.Error(), "never drives") {
+		t.Fatalf("--sim-annunciate must be refused with its reason, got %v", err)
 	}
 }
 

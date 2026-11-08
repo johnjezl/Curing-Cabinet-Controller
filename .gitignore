@@ -35,3 +35,5 @@ go.work.sum
 
 # Raw evidence is kept in Dropbox, not in git; see docs/evidence.md
 evidence/
+.rig-local/
+/cured

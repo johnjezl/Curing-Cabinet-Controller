@@ -1,6 +1,7 @@
 # ADR 0402: Alarm contact is energize-to-run
 
-Status: accepted. Measured on GPIO lines only. No relay has been connected.
+Status: accepted. Measured on GPIO lines only. No relay has been connected. The `--sim-annunciate`
+bench mode is removed by ADR 0406: a simulation never drives these lines.
 
 ## Context
 The alarm and buzzer lines fall with everything else when control dies (ADR 0207), so a contact that
@@ -51,6 +52,6 @@ still required: an alarm contact says the controller has failed, not that food i
   dialer needs a delay of about a minute, or it will call on every power blip. That is the honest reading.
 - The relay spends its life energized. It must be rated for continuous duty.
 - A welded contact shows healthy forever. Testing it periodically is the owner's job, in the checklist.
-- On a bench with no plant, `--sim-annunciate` lets the simulator drive these two lines, and only these,
-  so the healthy-to-failed transition can be measured. It is on in the bench unit only. Real hardware
-  mode with no sensors never gets to healthy, by design.
+- ~~On a bench with no plant, `--sim-annunciate` lets the simulator drive these two lines.~~ Removed by
+  ADR 0406: simulated alarms reached the real contact. Real hardware mode with no sensors never gets to
+  healthy, by design, so the healthy state now needs real sensors.

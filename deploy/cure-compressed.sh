@@ -9,10 +9,16 @@
 # rig to return with a new boot ID. A shell cannot cut power: call the labctl MCP tool
 # power_cycle on pi-5-3 when that file appears. Takes about 25 minutes at 700x for 12 days.
 # Holds .rig/lock throughout, unless the caller already does (RIG_LOCK_HELD).
+#
+# RIG=deploy/local-rig.sh runs the same cure on the local bench instead of the rig. The
+# cut is then local-rig.sh power-cut (--cut-seconds, default 33), not a labctl cycle.
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 1
-RIG="$ROOT/deploy/rig.sh"
+RIG="${RIG:-$ROOT/deploy/rig.sh}"
+case "$RIG" in /*) ;; *) RIG="$ROOT/$RIG" ;; esac
+LOCAL=0; case "$RIG" in *local-rig.sh) LOCAL=1 ;; esac
+CUT_SECONDS=33
 SPEED=700 RECIPE=test-12d OUTAGE=1x OUT="" CUT="" SCHEDULE=1 LIMIT_DAYS=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -23,11 +29,13 @@ while [ $# -gt 0 ]; do
     --cut-at-day) CUT="$2"; shift 2 ;;
     --stop-at-day) LIMIT_DAYS="$2"; shift 2 ;;
     --no-schedule) SCHEDULE=0; shift ;;
+    --cut-seconds) CUT_SECONDS="$2"; shift 2 ;;
     *) echo "unknown argument $1" >&2; exit 2 ;;
   esac
 done
 [ -n "$OUT" ] || { echo "--out is required" >&2; exit 2; }
 if [ -z "${RIG_LOCK_HELD:-}" ]; then
+  mkdir -p "$ROOT/.rig"
   exec 9>"$ROOT/.rig/lock"
   flock -w 1800 9 || { echo "no rig lock" >&2; exit 75; }
   export RIG_LOCK_HELD=1
@@ -117,8 +125,13 @@ while :; do
     cut_done=1
     shot "d${rel}-before-cut"
     old=$("$RIG" boot-id)
-    echo "$(stamp) waiting for a real power cut; old boot $old" >>"$A"
-    touch "$ROOT/.rig/power-cut-ready"
+    if [ "$LOCAL" = 1 ]; then
+      echo "$(stamp) local power cut for $CUT_SECONDS s; old boot $old" >>"$A"
+      "$RIG" power-cut "$CUT_SECONDS" >>"$A" 2>&1
+    else
+      echo "$(stamp) waiting for a real power cut; old boot $old" >>"$A"
+      touch "$ROOT/.rig/power-cut-ready"
+    fi
     while :; do id=$("$RIG" boot-id 2>/dev/null); [ -n "$id" ] && [ "$id" != "$old" ] && break; sleep 1; done
     rm -f "$ROOT/.rig/power-cut-ready"
     echo "$(stamp) back, new boot $id" >>"$A"

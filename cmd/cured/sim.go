@@ -48,11 +48,13 @@ const (
 )
 
 type simOptions struct {
-	sim        bool
-	speed      float64
-	speedSet   bool
-	outage     string
-	confirm    string
+	sim      bool
+	speed    float64
+	speedSet bool
+	outage   string
+	confirm  string
+	// annunciate is the removed --sim-annunciate. It is parsed only to refuse it
+	// with a reason: a simulated alarm must never reach a real line (ADR 0406).
 	annunciate bool
 }
 
@@ -95,6 +97,9 @@ func simGate(o simOptions, exists func(string) bool) error {
 	}
 	if o.confirm != simConfirmToken {
 		errs = append(errs, fmt.Errorf("--sim needs --sim-confirm=%s", simConfirmToken))
+	}
+	if o.annunciate {
+		errs = append(errs, errors.New("--sim-annunciate was removed: a simulation never drives the real alarm contact or buzzer (ADR 0406)"))
 	}
 	if exists(productionMarker) {
 		errs = append(errs, fmt.Errorf("%s exists: this machine is provisioned as a real cabinet", productionMarker))
@@ -419,12 +424,13 @@ func (s *simState) outagesCopy() []outageRecord {
 }
 
 // runSim runs the controller against the simulated plant in compressed time. It
-// never touches a plant output line. With --sim-annunciate it does drive the alarm
-// and buzzer lines through the guard, the two outputs that show fail-safe behaviour
-// on a bench with no plant; see ADR 0402.
+// never opens the output guard, so no simulated state can reach any real line:
+// not a plant relay, and not the alarm contact or the buzzer. The guard holds
+// every line off, so the energize-to-run contact reads "not controlling a
+// cabinet" for as long as the simulator runs, which is true. See ADR 0406.
 func runSim(ctx context.Context, o simOptions) error {
 	start := time.Now()
-	logfJ("<4>cured: start mode=SIMULATED speed=%.0f outage=%s annunciate=%v version=%s uptime=%.3f", o.speed, o.outage, o.annunciate, version, uptimeNow())
+	logfJ("<4>cured: start mode=SIMULATED speed=%.0f outage=%s lines=never-driven version=%s uptime=%.3f", o.speed, o.outage, version, uptimeNow())
 	r := &runtime{mode: "simulated", started: start, upStart: uptimeNow(), safeCfg: drivers.DefaultConfig()}
 	r.lastTick.Store(start.UnixNano())
 	plFS, err := core.NewOSFS(filepath.Join(simStateDir, "plant"))
@@ -442,32 +448,15 @@ func runSim(ctx context.Context, o simOptions) error {
 	r.checkSafe()
 	r.noteStart()
 
-	var lines hal.Outputs
-	var inner hal.Watchdog
-	var sysWD interface {
-		Ready() error
-		Stopping() error
-	}
-	if o.annunciate {
-		cab, wd, err := drivers.Open(r.safeCfg)
-		if err != nil {
-			return err
-		}
-		// Only these two lines, never a plant output: alarmOnly refuses the rest.
-		lines = alarmOnly{cab.Outputs}
-		if err := cab.Outputs.AllOff(); err != nil { // fresh guard state, as in real mode
-			logfJ("<4>cured: guard all-off at start: %v", err)
-		}
-		inner, sysWD = wd, wd
-		defer func() { _ = cab.Outputs.AllOff(); _ = cab.Close() }()
-	} else {
-		wd := drivers.NewWatchdog()
-		inner, sysWD = wd, wd
-	}
+	// systemd's watchdog only: no guard lease, because no line is ever asked for.
+	wd := drivers.NewWatchdog()
+	var inner hal.Watchdog = wd
+	sysWD := wd
 	cab := s.pl.Cabinet()
 	s.f = &lineFilter{next: cab.Outputs, forward: true}
 	cab.Outputs = s.f
-	r.ann = newAnnunciator(lines, s.f, r.sys, start)
+	r.ann = newAnnunciator(nil, s.f, r.sys, start) // decides the simulated contact and buzzer; drives nothing
+	r.linesDriven = false
 
 	osfs, err := core.NewOSFS(filepath.Join(simStateDir, "core"))
 	if err != nil {
@@ -673,18 +662,6 @@ func (f *groupSyncFile) Close() error {
 	_ = f.File.Sync()
 	return f.File.Close()
 }
-
-// alarmOnly lets --sim-annunciate reach the alarm and buzzer lines and nothing else.
-type alarmOnly struct{ out hal.Outputs }
-
-func (a alarmOnly) Set(id hal.OutputID, on bool) error {
-	if id != hal.OutAlarm && id != hal.OutBuzzer {
-		return fmt.Errorf("simulator may not drive %s", id)
-	}
-	return a.out.Set(id, on)
-}
-
-func (a alarmOnly) AllOff() error { return a.out.AllOff() }
 
 func (s *simState) uiPanicHook() {
 	switch s.uiFault.Load() {

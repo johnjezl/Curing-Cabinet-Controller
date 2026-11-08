@@ -21,8 +21,8 @@ RuntimeDirectoryMode=0755
 RuntimeDirectoryPreserve=yes
 WorkingDirectory=/var/lib/curing-sim
 EnvironmentFile=/etc/curing/sim.env
-ExecStart=/opt/curing/bin/cured --sim --speed ${SIM_SPEED} --sim-outage ${SIM_OUTAGE} --sim-confirm=not-a-real-cabinet --sim-annunciate
-ExecStopPost=-/opt/curing/bin/cured post-stop
+ExecStart=/opt/curing/bin/cured --sim --speed ${SIM_SPEED} --sim-outage ${SIM_OUTAGE} --sim-confirm=not-a-real-cabinet
+ExecStopPost=-/opt/curing/bin/cured post-stop --sim
 WatchdogSec=10s
 TimeoutAbortSec=3s
 TimeoutStartSec=120s

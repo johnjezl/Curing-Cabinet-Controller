@@ -5,6 +5,7 @@
 //	cured --sim ...    simulated plant. Refuses to start without every one of its
 //	                   explicit arguments; see simGate and docs/adr/0401.
 //	cured post-stop    run by systemd after the service ends, however it ended.
+//	                   With --sim (the simulator's unit) it leaves the guard alone.
 //	cured simctl ...   client of the control socket that exists only in --sim.
 //	cured version      prints the version.
 package main
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/johnjezl/curing-cabinet-controller/internal/drivers"
+	"github.com/johnjezl/curing-cabinet-controller/internal/hal"
 	"github.com/johnjezl/curing-cabinet-controller/internal/ui"
 )
 
@@ -47,7 +49,7 @@ func main() {
 			fmt.Println(version)
 			return
 		case "post-stop":
-			postStop()
+			postStop(len(args) > 1 && args[1] == "--sim")
 			return
 		case "simctl":
 			os.Exit(simctlMain(args[1:]))
@@ -108,13 +110,20 @@ func uptimeNow() float64 {
 // postStop runs after the service ended, however it ended. It must not assume
 // anything about what state the process left behind. It does not release the
 // lines with pinctrl: the guard owns them and may be alive, and changing a line it
-// holds behind its back would stop it driving that line later.
-func postStop() {
+// holds behind its back would stop it driving that line later. After a simulator
+// it does not talk to the guard at all: the simulator never asked it for anything
+// (ADR 0406), and the guard has kept every line off throughout.
+func postStop(sim bool) {
 	t := time.AfterFunc(stopBound, func() { logfJ("<3>cured post-stop: gave up"); os.Exit(3) })
 	defer t.Stop()
-	logfJ("<5>cured post-stop: result=%s exit_code=%s exit_status=%s uptime=%.2f", os.Getenv("SERVICE_RESULT"), os.Getenv("EXIT_CODE"), os.Getenv("EXIT_STATUS"), uptimeNow())
-	cab, err := drivers.New(drivers.DefaultConfig())
+	logfJ("<5>cured post-stop: result=%s exit_code=%s exit_status=%s sim=%v uptime=%.2f", os.Getenv("SERVICE_RESULT"), os.Getenv("EXIT_CODE"), os.Getenv("EXIT_STATUS"), sim, uptimeNow())
+	var cab hal.Cabinet
+	var err error
+	if !sim {
+		cab, err = drivers.New(drivers.DefaultConfig())
+	}
 	switch {
+	case sim:
 	case err != nil:
 		logfJ("<3>cured post-stop: drivers: %v", err)
 	default:

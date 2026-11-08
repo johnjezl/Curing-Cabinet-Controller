@@ -320,8 +320,9 @@ Nothing below has been run against real hardware, because the rig has only the d
 - Real tach signals, the PWM buffer, the PWM signal at the fan, and the fan's response.
 - Real relay modules. The lines' levels were read from RP1 registers, not on a meter.
 - The alarm contact on a real relay, either terminal, with any real sounder or dialer. GPIO 24 has only
-  been seen going high and low. Real hardware mode with no sensors never reaches healthy, so the healthy
-  state has only been reached with the simulated plant driving it (`--sim-annunciate`).
+  been seen going high and low. Real hardware mode with no sensors never reaches healthy. The healthy
+  state was reached only with the simulated plant driving it (`--sim-annunciate`), which ADR 0406
+  removed because simulated alarms then reached the real contact.
 - A real buzzer.
 - Long-term drift or noise of anything.
 - Door switch input on a real switch.

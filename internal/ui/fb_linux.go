@@ -52,6 +52,9 @@ func OpenFramebuffer(path string) (*Framebuffer, error) {
 	if err != nil {
 		return nil, err
 	}
+	if st, err := f.Stat(); err == nil && st.Mode().IsRegular() {
+		return fileFramebuffer(f, st.Size())
+	}
 	var vs [160]byte
 	if err := ioctl(f.Fd(), fbioGetVScreenInfo, unsafe.Pointer(&vs)); err != nil {
 		f.Close()
@@ -89,6 +92,27 @@ func OpenFramebuffer(path string) (*Framebuffer, error) {
 		w: w, h: h, stride: stride,
 		rOff: u32(vs[:], 32) / 8, gOff: u32(vs[:], 44) / 8, bOff: u32(vs[:], 56) / 8, aOff: aOff,
 		Name: strings.TrimRight(string(fs[:16]), "\x00"),
+	}, nil
+}
+
+// fileFramebuffer maps a plain file laid out as the panel's XRGB8888 framebuffer.
+// A device node always takes the ioctl path above, so this never applies on the
+// cabinet. It lets the bench harness (deploy/local-rig.sh) run the real binary on
+// a machine with no panel and convert the file to a screenshot with cmd/fbshot.
+func fileFramebuffer(f *os.File, size int64) (*Framebuffer, error) {
+	const stride = ScreenW * 4
+	if size != stride*ScreenH {
+		f.Close()
+		return nil, fmt.Errorf("%s is a plain file of %d bytes; a file framebuffer must be %d", f.Name(), size, stride*ScreenH)
+	}
+	mem, err := syscall.Mmap(int(f.Fd()), 0, int(size), syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("mmap: %w", err)
+	}
+	return &Framebuffer{
+		f: f, mem: mem, shadow: make([]byte, size), row: make([]byte, stride),
+		w: ScreenW, h: ScreenH, stride: stride, rOff: 2, gOff: 1, bOff: 0, aOff: -1, Name: "file",
 	}, nil
 }
 

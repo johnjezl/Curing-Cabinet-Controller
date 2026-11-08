@@ -16,14 +16,35 @@ func (p *Panel) drawHome(c *Canvas, st Status) {
 	_, _, note := blindNote(s, p.Stalled())
 	holds := len(s.Outputs.Holds) > 0 || note != "" || p.whyIdle() != ""
 	var aTop, aBot, bTop, bBot, cTop, cBot, digit, medDigit int
-	if big {
-		p.drawBigBanner(c, st)
+	// In simulation the across-the-room view starts with a full-width band (ADR 0406).
+	// The space comes out of the air and weight row, so the temperature and humidity
+	// digits keep their height, except with a banner and a hold both showing.
+	off := 0
+	if s.Health.Simulated {
+		off = simBandH
+		p.drawSimBand(c, rect(mX, headTop, mR, headTop+simBandH-4))
+	}
+	switch {
+	case big && off > 0:
+		p.drawBigBanner(c, st, off, 98)
+		aTop, aBot, digit = 132, 279, 104
+		bTop, bBot, cTop, cBot, medDigit = 282, 347, 350, 382, 30
+		if holds {
+			aBot, digit = 262, 84
+			bTop, bBot, cTop, medDigit = 265, 318, 321, 20
+		}
+	case big:
+		p.drawBigBanner(c, st, 0, 98)
 		aTop, aBot, digit = 108, 255, 104
 		bTop, bBot, cTop, cBot, medDigit = 258, 347, 350, 382, 40
 		if holds {
 			bBot, cTop, medDigit = 318, 321, 30
 		}
-	} else {
+	case off > 0:
+		p.drawHeaderIn(c, st, "", rect(mX, headTop+off, mR, headBot+off))
+		aTop, aBot, digit = 84, 231, 104
+		bTop, bBot, cTop, cBot, medDigit = 235, 315, 319, 382, 38
+	default:
 		p.drawHeader(c, st, "")
 		aTop, aBot, digit = 60, 222, 118
 		bTop, bBot, cTop, cBot, medDigit = 226, 315, 319, 382, 46
@@ -88,9 +109,9 @@ func (p *Panel) weightSub() string {
 	return "from " + fmtWeight(pr.StartWeightG)
 }
 
-func (p *Panel) drawBigBanner(c *Canvas, st Status) {
+func (p *Panel) drawBigBanner(c *Canvas, st Status, off, height int) {
 	bg, fg := levelColors(st.Level)
-	r := rect(mX, headTop, mR, 104)
+	r := rect(mX, headTop+off, mR, headTop+off+height)
 	c.Round(r, 6, bg)
 	s := &p.snap
 	const colW = 146
