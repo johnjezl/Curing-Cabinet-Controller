@@ -60,18 +60,17 @@ type control struct {
 	comp compressor
 
 	coolWant   bool
-	coolOnT    float64 // last time cooling was physically on
 	everCooled bool
 
 	heatWinT    float64
 	heatOnUntil float64
 	heatOn      bool
+	heatDemand  float64 // last heater duty asked for, 0..1, for the panel's reason
 
 	dehum      bool
 	rhI        float64
 	tI         float64
 	credit     float64
-	heatCredit float64
 	dehumSince float64
 	rhHighT    float64
 
@@ -258,7 +257,6 @@ func (c *Core) controlClimate(dt float64) {
 	ctl.coolWant = wantCool
 	ctl.comp.update(t, wantCool)
 	if ctl.comp.on {
-		ctl.coolOnT = t
 		ctl.everCooled = true
 	}
 
@@ -267,33 +265,16 @@ func (c *Core) controlClimate(dt float64) {
 	// cold (docs/adr/0113). It never reduces or stops cooling.
 	suspect := c.st.TDoubtUntil != 0 || c.st.RHDoubtUntil != 0
 	heatAllowed := tOK && ctl.airflowProven && !doorHoldOther && t-c.bootT > 30 && !suspect
+	ctl.heatDemand = heatDuty
 	switch {
 	case !heatAllowed || heatDuty <= 0:
 		ctl.heatOnUntil = 0
-		ctl.heatCredit = 0
-	case ctl.dehum:
-		// Reheat is placed on the compressor run it cancels, starting once the coil
-		// has got cold. That flattens the air and costs one relay closure per run
-		// instead of one per fixed window.
-		ctl.heatCredit = clamp(ctl.heatCredit+heatDuty*dt, 0, 900)
-		if t >= ctl.heatOnUntil {
-			run := ctl.comp.on && t-ctl.comp.lastStart >= 45 && ctl.heatCredit >= 20
-			// With no compressor run near, heat is simply what the air needs.
-			limit := 300.0
-			if t-ctl.coolOnT > 600 {
-				limit = 40
-			}
-			if run || ctl.heatCredit >= limit {
-				ctl.heatOnUntil = t + ctl.heatCredit
-				ctl.heatCredit = 0
-			}
-		}
 	default:
-		const win = 120.0
+		const win = 60.0
 		if t-ctl.heatWinT >= win {
 			ctl.heatWinT = t
 			on := heatDuty * win
-			if on < 10 {
+			if on < 5 {
 				on = 0 // too short to bother a relay
 			}
 			ctl.heatOnUntil = t + on
@@ -411,26 +392,9 @@ func (c *Core) tempLoop(set api.Setpoints, uR float64, door bool, dt float64) (c
 		cool = false
 	}
 
-	// Heating and cooling must not fight. Outside reheat for dehumidifying, the heater
-	// only runs once the compressor has been off for its minimum off time with no
-	// cooling demand building, and only under setpoint; and the compressor does not
-	// start within 5 min of the heater unless the air is clearly over setpoint.
-	// The 0.3 °C gap between them keeps a cabinet whose room sits near setpoint from
-	// swinging between the two (round 3: 9 to 18 °C on a small cabinet with a big heater).
-	compRested := !ctl.comp.on && (!ctl.comp.hasStop || c.t-ctl.comp.lastStop >= cfg.CompMinOff) && ctl.credit <= 0
-	switch {
-	case uR > 0 && ctl.comp.on:
-		heat = clamp(-uT, 0, 1) // reheat against the compressor run it cancels
-	case (ctl.tI <= 0.02 || uR > 0) && compRested && c.tS.v < set.TempC-0.3:
-		heat = clamp(-uT-0.05, 0, 1)
-	case compRested && c.tF.v < set.TempC-1.2:
-		heat = clamp(0.25*(set.TempC-1.2-c.tF.v), 0, 1)
-	}
+	heat = clamp(-uT, 0, 1)
 	if heat < 0.05 {
 		heat = 0
-	}
-	if cool && !ctl.comp.on && c.t-c.lastHeatOn < 300 && c.tS.v < set.TempC+1 && uR <= 0 {
-		cool = false
 	}
 	return cool, heat
 }

@@ -123,6 +123,11 @@ Six independent outputs. **The module must be high-level trigger.**
 Rate each relay for its load, including inrush. A compressor needs a motor-rated
 contactor or relay. Do not switch it directly from a small module.
 
+**The heater and the humidifier need solid-state relays** (zero-cross, rated for the
+element's current). The heater pulses in a 60 s window and closed about 1,400 times a day
+on the simulated plant, about 17,000 times in a 12-day cure (ADR 0101); a mechanical relay
+rated for 100,000 operations would wear out within a few cures.
+
 ### Alarm contact (fail-safe)
 
 The alarm relay on GPIO 24 is **energized while the controller is running and has nothing to report**. It

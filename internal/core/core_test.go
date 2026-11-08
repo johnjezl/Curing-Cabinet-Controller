@@ -112,7 +112,14 @@ func TestHeaterAndHumidifierNeverRunOnBadData(t *testing.T) {
 			r.Advance(6 * 3600)
 			r.Plant.Inject(k.dev, k.kind, k.par)
 			if k.dev == sim.DevTemp && k.kind == sim.FaultStuck {
-				r.Advance(1200) // detection takes a while by design
+				// A frozen value is seen after 6 min of heating or cooling that should
+				// have moved it, or 2 h regardless. With the heater cycling at its
+				// working duty that takes about half an hour of real time.
+				t0 := r.Clock.VT
+				if !r.AdvanceUntil(2*3600+60, func() bool { return r.Core.Probe().TempQ != api.QualityOK }) {
+					t.Fatal("stuck reading never detected")
+				}
+				t.Logf("stuck reading detected after %.0f s", r.Clock.VT-t0)
 			} else {
 				r.Advance(30)
 			}

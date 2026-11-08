@@ -1225,7 +1225,7 @@ func (c *Core) outputStatus() []api.OutputStatus {
 	case ctl.coolWant:
 		cool = st(co, false, "hold", "starting")
 	case c.tS.v > set.TempC:
-		cool = st(co, false, "normal", "building up demand for the next run; runs are spaced to protect the compressor")
+		cool = st(co, false, "normal", fmt.Sprintf("%.1f °C over setpoint: building up demand for the next run", c.tS.v-set.TempC))
 	default:
 		cool = st(co, false, "normal", "at or under setpoint")
 	}
@@ -1244,12 +1244,16 @@ func (c *Core) outputStatus() []api.OutputStatus {
 		heat = st(he, false, "hold", "door open")
 	case !ctl.airflowProven:
 		heat = st(he, false, "fault", "locked off: no airflow proven")
+	case c.st.TDoubtUntil != 0 || c.st.RHDoubtUntil != 0:
+		heat = st(he, false, "hold", "locked off while a reading is in doubt: only cooling is allowed")
+	case t-c.bootT <= 30:
+		heat = st(he, false, "hold", "settling after power-on")
 	case c.tS.v >= set.TempC:
 		heat = st(he, false, "normal", "at or over setpoint")
-	case ctl.tI > 0.02:
-		heat = st(he, false, "normal", "under setpoint after a compressor run; the air comes back by itself in a cabinet that needs cooling")
+	case ctl.heatDemand > 0:
+		heat = st(he, false, "normal", fmt.Sprintf("%.1f °C under setpoint: on %.0f %% of each minute, off between pulses", set.TempC-c.tS.v, 100*ctl.heatDemand))
 	default:
-		heat = st(he, false, "normal", "slightly under setpoint; pulses are spaced")
+		heat = st(he, false, "normal", fmt.Sprintf("%.1f °C under setpoint: this cabinet needs cooling overall, so the room brings it back", set.TempC-c.tS.v))
 	}
 	var hum api.OutputStatus
 	const hu = "humid"
