@@ -206,13 +206,14 @@ func TestSpikesRejectedWithoutChangingControl(t *testing.T) {
 	}
 }
 
+// The buzzer line is energize-to-silence (ADR 0407): CmdBuzzer false is a sounding buzzer.
 func TestSilenceDoesNotHideCondition(t *testing.T) {
 	r := newRun(t)
 	r.SetPoint(13, 76, 1.2)
 	r.Advance(3 * 3600)
 	r.Plant.Inject(sim.DevClimate, sim.FaultDead, 0)
 	r.Advance(60)
-	if !r.Plant.CmdBuzzer || r.Plant.CmdAlarm {
+	if r.Plant.CmdBuzzer || r.Plant.CmdAlarm {
 		t.Fatal("buzzer should be on and the energize-to-run contact open")
 	}
 	if err := r.Core.Do(api.Command{Kind: api.CmdSilence}); err != nil {
@@ -220,7 +221,7 @@ func TestSilenceDoesNotHideCondition(t *testing.T) {
 	}
 	r.Advance(5)
 	s := r.Core.Snapshot()
-	if r.Plant.CmdBuzzer {
+	if !r.Plant.CmdBuzzer {
 		t.Fatal("buzzer not silenced")
 	}
 	if r.Plant.CmdAlarm {
@@ -231,7 +232,7 @@ func TestSilenceDoesNotHideCondition(t *testing.T) {
 	}
 	// The silence times out and sounds again for an unacknowledged alarm.
 	r.Advance(31 * 60)
-	if !r.Plant.CmdBuzzer {
+	if r.Plant.CmdBuzzer {
 		t.Fatal("silence should time out while the alarm is unacknowledged")
 	}
 	// Ack silences for good, and the alarm stays active until the condition ends.
@@ -239,7 +240,7 @@ func TestSilenceDoesNotHideCondition(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.Advance(40 * 60)
-	if r.Plant.CmdBuzzer {
+	if !r.Plant.CmdBuzzer {
 		t.Fatal("acknowledged alarm should not sound")
 	}
 	s = r.Core.Snapshot()
@@ -257,7 +258,7 @@ func TestSilenceDoesNotHideCondition(t *testing.T) {
 	}
 	// The buzzer comes back after an hour if it is still there.
 	r.Advance(25 * 60)
-	if !r.Plant.CmdBuzzer {
+	if r.Plant.CmdBuzzer {
 		t.Fatal("buzzer should return an hour after acknowledge while the critical is present")
 	}
 	_ = r.Core.Do(api.Command{Kind: api.CmdAck})
@@ -265,7 +266,7 @@ func TestSilenceDoesNotHideCondition(t *testing.T) {
 	// A new alarm sounds again.
 	r.Plant.Inject(sim.DevAir, sim.FaultDead, 0)
 	r.Advance(30)
-	if !r.Plant.CmdBuzzer {
+	if r.Plant.CmdBuzzer {
 		t.Fatal("a new alarm should sound")
 	}
 }

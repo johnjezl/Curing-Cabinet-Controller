@@ -74,8 +74,9 @@ the normally-closed wiring, and it is the installer's job to fit it.
 - A critical past event (outputs dropped; an outage that came back over the absolute limit or over 15.6 °C
   under a lower setpoint) holds the contact and the buzzer until acknowledged. A warning event still signals
   for 30 min.
-- The buzzer is a relay on the same board. When the board cannot be written, or the guard has dropped every
-  output, the buzzer cannot sound, and no software can change that. The contact does open, by the guard. A
+- ~~The buzzer is a relay on the same board. When the board cannot be written, or the guard has dropped every
+  output, the buzzer cannot sound, and no software can change that.~~ Superseded by ADR 0407: the buzzer is
+  energize-to-silence, so a dropped board sounds it. The contact does open, by the guard. A
   buzzer that sounds on a lost lease needs wiring through the guard or a normally-closed driver: a hardware
   decision for parts B and D.
 - In the simulator's logs the contact is open whenever the plant is unpowered, which is what an energize-to-run

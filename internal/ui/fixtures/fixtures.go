@@ -356,6 +356,20 @@ func All() []Fixture {
 			s.Program.Verify = VerifyText
 			s.Active = []api.Alarm{alarm("CURE_FINISHED", api.SevWarning, "Recipe finished: operator must verify", "The controller does not determine whether product is safe. Verify by your own process plan.", 40*time.Minute, 0, 0, "")}
 		})},
+		{Name: "outputs-unwritable", Make: with(func(s *api.Snapshot) {
+			// ADR 0407: nothing commanded is proved while writes fail.
+			why := "outputs cannot be written, so the real state is not known: cool: relay board not answering"
+			s.Outputs.Status = []api.OutputStatus{{Output: "cool", Kind: "unknown", Reason: why}, {Output: "heat", Kind: "unknown", Reason: why}, {Output: "humid", Kind: "unknown", Reason: why}}
+			s.Active = []api.Alarm{alarm("OUTPUT_FAULT", api.SevCritical, "Output could not be switched", "Check the relay board and its connection.", 2*time.Minute, 0, 0, ""), alarmTempHigh}
+		})},
+		{Name: "heat-stuck", Make: with(func(s *api.Snapshot) {
+			s.Temp = good(17.9)
+			s.Outputs.Heat = false
+			s.Outputs.Status = []api.OutputStatus{{Output: "cool", On: true, Kind: "normal", Reason: "cooling"},
+				{Output: "heat", On: true, Kind: "stuck", Reason: "relay appears stuck closed: the cabinet takes far more cooling with the heater commanded off"},
+				{Output: "humid", Kind: "normal", Reason: "at or over setpoint"}}
+			s.Active = []api.Alarm{alarm("HEAT_STUCK_ON", api.SevCritical, "Heater appears stuck on", "Switch off or disconnect the heater at its supply.", 40*time.Minute, 17.9, 13, "°C")}
+		})},
 		{Name: "simulated", Make: with(func(s *api.Snapshot) { s.Health.Simulated, s.Health.SpeedFactor = true, 60 })},
 		{Name: "simulated-alarm", Make: with(func(s *api.Snapshot) {
 			s.Health.Simulated, s.Health.SpeedFactor = true, 60

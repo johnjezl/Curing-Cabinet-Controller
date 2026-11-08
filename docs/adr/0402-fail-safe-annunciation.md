@@ -40,7 +40,9 @@ attached; the timings are in `evidence/d`.
 lines, so the relay stays energized and the contact keeps saying healthy until the board resets: about
 10 s for a panic by the bracket in ADR 0207, and the hardware watchdog path is not proven (ADR 0203).
 
-**The local buzzer cannot sound when the Pi is dead, and no software can change that.** It runs from a
+**The local buzzer cannot sound when the Pi is dead, and no software can change that.** (Superseded in part by
+ADR 0407: the buzzer is now energize-to-silence, so a dead process or a dropped board sounds it while the relay
+module has power. A power cut still silences it.) It runs from a
 relay the Pi holds energized, so anything that stops the Pi also stops it: a dead process leaves it off,
 and a power cut removes it. What can sound is a sounder powered independently and wired through the
 alarm relay's normally closed contact, which is the wiring in docs/wiring.md. If mains goes too, that

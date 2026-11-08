@@ -130,12 +130,12 @@ func TestContactEnergizedOnlyWhenHealthyAndArmed(t *testing.T) {
 	_ = f.Set(hal.OutAlarm, true)
 	sys.Raise(CodeDisplayMissing, api.SevCritical, "t", "a")
 	a.Tick(*clock, "")
-	if l.alarm || !l.buzzer {
+	if l.alarm || l.buzzer { // both energize-to-run: low is open and sounding
 		t.Fatalf("a system alarm must open the contact and sound: %+v", l)
 	}
 	sys.Ack("")
 	a.Tick(*clock, "")
-	if l.alarm || l.buzzer {
+	if l.alarm || !l.buzzer {
 		t.Fatalf("ack stops the buzzer, never the contact: %+v", l)
 	}
 	sys.Clear(CodeDisplayMissing)
@@ -194,7 +194,7 @@ func TestLineFilterKeepsAnnunciatorLinesFromHardware(t *testing.T) {
 	f := &lineFilter{next: next}
 	_ = f.Set(hal.OutAlarm, true)
 	_ = f.Set(hal.OutBuzzer, true)
-	if next.sets != 0 || !f.coreHealthy.Load() || !f.coreBuzzer.Load() {
+	if next.sets != 0 || !f.coreHealthy.Load() || f.coreBuzzer.Load() { // energized buzzer line: silent
 		t.Fatalf("filter leaked: %+v", next)
 	}
 	_ = f.Set(hal.OutCool, true)
@@ -279,7 +279,7 @@ func TestSystemWarningIsARecordOnly(t *testing.T) {
 	*clock = clock.Add(armDelay)
 	sys.Raise(CodePanelRecovered, api.SevWarning, "t", "a")
 	a.Tick(*clock, api.QualityOK)
-	if !l.alarm || l.buzzer {
+	if !l.alarm || !l.buzzer {
 		t.Fatalf("a warning must not open the contact or sound: %+v", l)
 	}
 	if len(sys.Active()) != 1 {

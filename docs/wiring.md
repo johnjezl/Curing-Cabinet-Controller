@@ -161,14 +161,14 @@ still reads healthy until the board resets (`docs/adr/0203-watchdog-chain.md`).
 
 ### Buzzer (GPIO 25)
 
-**Required: an independently powered sounder on the alarm contact's normally closed side.** The buzzer
-relay drops with every other output whenever the application fails, hangs, restarts or loses power, so
-the local buzzer is silent in exactly the failures that most need a sound.
+**The buzzer is energize-to-silence (ADR 0407): wire the sounder to the GPIO 25 relay's normally closed
+terminal.** The controller holds the relay energized to keep the sounder quiet. Whenever the line drops
+(the application fails, hangs, restarts or is stopped, the guard drops the outputs because they cannot be
+written, or the Pi is powered but not running control) the relay releases and the sounder sounds. It also
+sounds for about 40 s from power-on until control starts.
 
-The local buzzer is driven on demand through its relay. **It cannot sound when the Pi is dead, or when
-power is gone, and no software can change that.** It tells someone standing nearby about alarms that
-control knows about, including a blank panel. For a dead controller use the alarm contact above with an
-independently powered sounder.
+**Still required: an independently powered sounder on the alarm contact's normally closed side.** A sounder
+fed from the Pi's own supply is silent when power is gone, and no software can change that.
 
 ### Door switch (optional)
 A normally closed contact between GPIO 26 and ground. Door shut pulls low; door open

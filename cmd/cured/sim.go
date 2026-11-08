@@ -448,9 +448,10 @@ func runSim(ctx context.Context, o simOptions) error {
 	r.checkSafe()
 	r.noteStart()
 
-	// systemd's watchdog only: no guard lease, because no line is ever asked for.
+	// systemd's watchdog, and a simulated guard on the simulated plant's relays in
+	// virtual time. The real guard is never asked for anything (ADR 0406).
 	wd := drivers.NewWatchdog()
-	var inner hal.Watchdog = wd
+	guard := sim.NewSimGuard(s.pl)
 	sysWD := wd
 	cab := s.pl.Cabinet()
 	s.f = &lineFilter{next: cab.Outputs, forward: true}
@@ -466,7 +467,7 @@ func runSim(ctx context.Context, o simOptions) error {
 	var lastPet atomic.Int64
 	lastPet.Store(start.UnixNano())
 	hold := &outputHold{lastPet: &lastPet}
-	wdw := watchedWD{inner: &rateWD{inner: inner}, last: &lastPet, on: func(e error) {
+	wdw := watchedWD{inner: simWatchdogs{guard: guard, sys: &rateWD{inner: wd}}, last: &lastPet, on: func(e error) {
 		if errors.Is(e, hal.ErrOutputsDropped) {
 			r.ann.Dropped()
 		}
@@ -532,6 +533,7 @@ func runSim(ctx context.Context, o simOptions) error {
 			s.pl.Step(1)
 			s.clk.Set(s.pl.T)
 			c.Step()
+			guard.Tick(s.pl.T)
 			done++
 			n++
 		}
@@ -579,6 +581,16 @@ func runSim(ctx context.Context, o simOptions) error {
 	}
 	return err
 }
+
+// simWatchdogs pets the simulated guard on every virtual step, which is what its
+// virtual-time lease needs, and systemd at most every petEvery of real time.
+type simWatchdogs struct {
+	guard *sim.SimGuard
+	sys   *rateWD
+}
+
+// Pet implements hal.Watchdog.
+func (w simWatchdogs) Pet() error { return errors.Join(w.guard.Pet(), w.sys.Pet()) }
 
 // simSyncEvery limits fsyncs of core's append-only files in compressed time.
 const simSyncEvery = time.Second

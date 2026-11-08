@@ -284,10 +284,11 @@ func (r *runtime) statusMap() map[string]any {
 	if r.linesDriven {
 		m["alarm_contact_closed"], m["buzzer_on"] = closed, buzz
 	} else {
-		// No line follows the decision in a simulation: the guard holds both off, so
-		// the real contact is open and the real buzzer silent (ADR 0406). The
-		// simulated decision is reported under its own names.
-		m["alarm_contact_closed"], m["buzzer_on"] = false, false
+		// No line follows the decision in a simulation: the guard holds every line off,
+		// so the real contact is open and a wired sounder sounds, both energize-to-run
+		// (ADR 0406, 0407). The simulated decision is reported under its own names.
+		m["alarm_contact_closed"], m["buzzer_on"] = false, true
+		m["real_lines"] = "not driven by a simulation: contact open, buzzer line low (a wired sounder sounds)"
 		m["simulated_contact_closed"], m["simulated_buzzer_on"] = closed, buzz
 	}
 	if r.statusX != nil {

@@ -21,14 +21,15 @@ const reassertEvery = 5 * time.Second
 
 // lineFilter sits between core and the outputs. It passes the plant outputs on and
 // keeps the two annunciator outputs for the annunciator, because only this process
-// knows everything that decides them. core's OutAlarm is energize-to-run: on means
-// core has nothing calling. With forward set they also reach next, which the
-// simulated plant uses to record them.
+// knows everything that decides them. Both of core's annunciator lines are
+// energize-to-run: OutAlarm on means core has nothing calling, OutBuzzer on means
+// silent (ADR 0407). With forward set they also reach next, which the simulated
+// plant uses to record them.
 type lineFilter struct {
 	next        hal.Outputs
 	forward     bool
 	coreHealthy atomic.Bool
-	coreBuzzer  atomic.Bool
+	coreBuzzer  atomic.Bool // core wants the buzzer sounding
 }
 
 // Set implements hal.Outputs.
@@ -37,7 +38,7 @@ func (f *lineFilter) Set(id hal.OutputID, on bool) error {
 	case hal.OutAlarm:
 		f.coreHealthy.Store(on)
 	case hal.OutBuzzer:
-		f.coreBuzzer.Store(on)
+		f.coreBuzzer.Store(!on) // energized line is a silent buzzer
 	default:
 		return f.next.Set(id, on)
 	}
@@ -47,10 +48,11 @@ func (f *lineFilter) Set(id hal.OutputID, on bool) error {
 	return nil
 }
 
-// AllOff implements hal.Outputs. It is the fail-safe path, so nothing is held back.
+// AllOff implements hal.Outputs. It is the fail-safe path, so nothing is held back:
+// every line low, which is an open contact and a sounding buzzer.
 func (f *lineFilter) AllOff() error {
 	f.coreHealthy.Store(false)
-	f.coreBuzzer.Store(false)
+	f.coreBuzzer.Store(true)
 	return f.next.AllOff()
 }
 
@@ -87,7 +89,8 @@ func (a *annunciator) Dropped() { a.dropped.Store(true) }
 func (a *annunciator) Tick(now time.Time, temp api.Quality) { a.tick(now, temp, false) }
 
 // tick with hold set writes nothing: a write would renew the relay lease that core
-// is deliberately letting run out.
+// is deliberately letting run out. The guard has then dropped every line, so the
+// contact is open and the buzzer, energize-to-silence, sounds.
 func (a *annunciator) tick(now time.Time, temp api.Quality, hold bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -103,7 +106,7 @@ func (a *annunciator) tick(now time.Time, temp api.Quality, hold bool) {
 	closed := a.armed && a.f.coreHealthy.Load() && !a.sys.Calling()
 	buzz := a.f.coreBuzzer.Load() || a.sys.Sounding()
 	if hold {
-		closed, buzz = false, false
+		closed, buzz = false, true
 	}
 	a.contactClosed, a.buzzerOn = closed, buzz
 	if a.lines == nil || hold {
@@ -114,7 +117,7 @@ func (a *annunciator) tick(now time.Time, temp api.Quality, hold bool) {
 		return
 	}
 	e1 := a.lines.Set(hal.OutAlarm, closed)
-	e2 := a.lines.Set(hal.OutBuzzer, buzz)
+	e2 := a.lines.Set(hal.OutBuzzer, !buzz) // energized is silent (ADR 0407)
 	if e1 != nil || e2 != nil {
 		a.haveLast = false
 		a.errs++

@@ -318,7 +318,7 @@ func (r *Run) observe() {
 		TrueT: pl.TAir, TrueWall: pl.TWall, TrueProd: pl.TProd, TrueCoil: pl.TCoil, TrueRH: pl.RH(), TrueAirMS: pl.FanV, TrueMassG: pl.ProdKg * 1000, Ambient: pl.Ambient(),
 		CtlT: v.Temp, CtlRH: v.RH, CtlAir: v.Air, CtlW: v.Weight, QT: string(v.TempQ), QRH: string(v.RHQ), QAir: string(v.AirQ), QW: string(v.WeightQ),
 		CoolCmd: v.Cool, CoolEff: pl.EffCool(), HeatCmd: v.Heat, HeatEff: pl.EffHeat(), HumCmd: v.Humid, HumEff: pl.EffHumid(), DehumCmd: v.Dehumid, Defrost: v.Defrost, Door: pl.DoorIsOpen,
-		FanDuty: v.Fan, RPM: v.RPM, AlarmRelay: !pl.Powered || !pl.CmdAlarm, Buzzer: pl.CmdBuzzer, NActive: v.ActiveWarn, FrostG: pl.Frost, EnergyWh: pl.EnergyWh(), LossTruePct: pl.WaterLossPct(), LossCtl: v.LossPct,
+		FanDuty: v.Fan, RPM: v.RPM, AlarmRelay: !pl.Powered || !pl.CmdAlarm, Buzzer: pl.Powered && !pl.CmdBuzzer, NActive: v.ActiveWarn, FrostG: pl.Frost, EnergyWh: pl.EnergyWh(), LossTruePct: pl.WaterLossPct(), LossCtl: v.LossPct,
 		Run: string(v.RunState), Phase: v.Phase, TotalElapsed: v.TotalElapsed}
 	if row.QT == "" {
 		row.QT, row.QRH, row.QAir, row.QW = "none", "none", "none", "none"

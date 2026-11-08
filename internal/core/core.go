@@ -578,8 +578,11 @@ func (c *Core) apply(w wanted, fan float64) {
 	set(hal.OutDehumid, w.dehum)
 	// Energize-to-run: closed means healthy, so that a dead controller, a dead
 	// guard and lost power all read as an alarm through normally-closed wiring.
+	// The buzzer is the same: energized means silent, so a dropped line sounds it,
+	// including when the guard drops every output because they cannot be written
+	// (ADR 0407).
 	set(hal.OutAlarm, !w.alarm)
-	set(hal.OutBuzzer, w.buzzer)
+	set(hal.OutBuzzer, !w.buzzer)
 	if c.cab.Fan != nil && (math.Abs(fan-c.lastFanOut) >= 0.1 || !c.fanCmdSent || force) {
 		if err := c.cab.Fan.SetDuty(fan); err != nil {
 			if firstErr == nil {
@@ -1276,6 +1279,19 @@ func (c *Core) outputStatus() []api.OutputStatus {
 		hum = st(hu, false, "normal", "waiting to see the last pulse settle")
 	default:
 		hum = st(hu, false, "normal", "under setpoint, within the band left for compressor cycling")
+	}
+	// What the cabinet's response proves overrides what was commanded.
+	if c.al.active[CodeCoolStuck] != nil {
+		cool = st(co, true, "stuck", "relay appears stuck closed: the air falls with the compressor commanded off")
+	}
+	if c.al.active[CodeHeatStuck] != nil {
+		heat = st(he, true, "stuck", "relay appears stuck closed: the cabinet takes far more cooling with the heater commanded off")
+	}
+	// A failed write leaves every relay where it was, or wherever the guard put it:
+	// nothing here can say which (ADR 0407).
+	if c.outputErr != "" {
+		why := "outputs cannot be written, so the real state is not known: " + c.outputErr
+		cool, heat, hum = st(co, false, "unknown", why), st(he, false, "unknown", why), st(hu, false, "unknown", why)
 	}
 	return []api.OutputStatus{cool, heat, hum}
 }

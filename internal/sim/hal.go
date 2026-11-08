@@ -425,7 +425,9 @@ func (s simDoor) Open() (bool, error) {
 }
 
 // SimGuard stands in for the hardware output guard: after DropOutputs every output
-// is off and the next Pet reports it, as the real guard's lease does.
+// is off and the next Pet reports it, as the real guard's lease does. cured --sim
+// uses one too, in virtual time, so an output write fault drops the plant's relays
+// as the rig's guard would (ADR 0407).
 //
 // The guard also has its own 3 s lease: when Pet stops arriving it opens every relay
 // by its own path, which works even when the relay board refuses the controller.
@@ -435,6 +437,12 @@ type SimGuard struct {
 	lastPet float64
 	expired bool
 }
+
+// NewSimGuard returns a guard whose lease starts now.
+func NewSimGuard(pl *Plant) *SimGuard { return &SimGuard{pl: pl, lastPet: pl.T} }
+
+// Tick applies the lease at virtual time t.
+func (g *SimGuard) Tick(t float64) { g.tick(t) }
 
 // tick applies the lease.
 func (g *SimGuard) tick(t float64) {

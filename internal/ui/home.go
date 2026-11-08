@@ -124,7 +124,12 @@ func (p *Panel) drawBigBanner(c *Canvas, st Status, off, height int) {
 	}
 	if st.Alarm != nil && (sounding || s.BuzzerSilenced) {
 		b := rect(r.Max.X-colW-3, r.Min.Y+3, r.Max.X-3, r.Max.Y-3)
-		if s.BuzzerSilenced {
+		if p.statusKind("cool") == "unknown" {
+			// The guard has dropped every line, so the buzzer sounds and no command
+			// can reach it: offering to silence it would be a lie (ADR 0407).
+			c.Round(b, 6, colBG)
+			c.Wrap(b.Inset(6), "OUTPUTS DOWN: CANNOT SILENCE", Style{Font: FontBold, Size: 20, Color: colText, H: Center, MinSize: 14}, 3)
+		} else if s.BuzzerSilenced {
 			c.Round(b, 6, colBG)
 			c.Wrap(b.Inset(6), "BUZZER SILENCED", Style{Font: FontBold, Size: 22, Color: colText, H: Center, MinSize: 16}, 2)
 		} else {
@@ -474,11 +479,20 @@ func (p *Panel) drawOutputs(c *Canvas, r image.Rectangle, holds bool) {
 	if chipR.Dy() < 30 {
 		size = 16
 	}
+	unknown := p.statusKind("cool") == "unknown" || p.statusKind("heat") == "unknown"
 	for i, ch := range chips {
 		x := r.Min.X + i*(w+4)
 		b := rect(x, chipR.Min.Y, x+w, chipR.Max.Y)
+		kind := p.statusKind(strings.ToLower(ch.label))
 		switch {
-		case !ch.on && p.statusKind(strings.ToLower(ch.label)) == "fault":
+		case unknown && ch.label != "DEFROST":
+			// Writes are failing: what was commanded proves nothing.
+			c.Round(b, 4, colWarn)
+			c.Text(b.Inset(2), ch.label+" UNKNOWN", Style{Font: FontBold, Size: size, Color: colBlack, H: Center, MinSize: 11})
+		case kind == "stuck":
+			c.Round(b, 4, colCrit)
+			c.Text(b.Inset(2), ch.label+" STUCK ON", Style{Font: FontBold, Size: size, Color: colText, H: Center, MinSize: 11})
+		case !ch.on && kind == "fault":
 			c.Round(b, 4, colCrit)
 			c.Text(b.Inset(2), ch.label+" FAULT", Style{Font: FontBold, Size: size, Color: colText, H: Center, MinSize: 12})
 		case ch.hold:
