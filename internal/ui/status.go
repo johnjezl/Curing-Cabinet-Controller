@@ -208,8 +208,9 @@ func blindNote(s *api.Snapshot, stalled bool) (tempBlind, rhBlind bool, note str
 	if stalled {
 		return false, false, ""
 	}
+	// A reading in doubt still controls the compressor: it is not lost feedback.
 	unusable := func(r api.Reading) bool {
-		return r.Quality != api.QualityOff && !readingGood(r)
+		return r.Quality != api.QualityOff && !r.Doubt && !readingGood(r)
 	}
 	tempBlind, rhBlind = unusable(s.Temp), unusable(s.RH)
 	switch {
@@ -219,6 +220,8 @@ func blindNote(s *api.Snapshot, stalled bool) (tempBlind, rhBlind bool, note str
 		note = "NO TEMP FEEDBACK"
 	case rhBlind:
 		note = "NO RH FEEDBACK"
+	case s.Temp.Doubt || s.RH.Doubt:
+		note = "READING IN DOUBT: HEAT, HUMID HELD"
 	}
 	return tempBlind, rhBlind, note
 }

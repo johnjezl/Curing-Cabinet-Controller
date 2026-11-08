@@ -45,3 +45,24 @@ because no command can reach the buzzer then.
   contact's normally closed side (docs/wiring.md) remains the one that covers that.
 - A stuck relay is only shown once its cross-check alarm is raised; how fast and how accurately is defect 1's other
   half (ADR 0110 and its successor).
+
+## Amendment after the first re-test
+The re-test found the write fault itself right (chips UNKNOWN, buzzer on, CANNOT SILENCE, one record), and its end
+wrong. On repair core met the guard's drop it had caused itself and raised OUTPUTS_DROPPED, "The control loop stalled",
+which it had not. The new alarm then started a brief close while the relay was still proving health, and that build
+also took the buzzer off during a brief close: buzzer off for 18.5 s with TEMP_HIGH_CRITICAL standing. During the
+fault COOL_NO_EFFECT blamed a compressor that could not be switched, and FAN_STALL a fan the guard had stopped.
+
+Changes, each removing a judgment made on something that did not happen:
+- A drop that ends core's own hold is recorded as an event ("outputs restored after the output fault") and is not
+  OUTPUTS_DROPPED: OUTPUT_FAULT already said it. A drop core did not cause still raises OUTPUTS_DROPPED.
+- The annunciator starts no brief close until it is armed again: before that the contact is open and may not close.
+  The buzzer follows the alarms throughout (it has not been gated by the brief close since ADR 0408's second revision).
+- Effect checks (compressor, heater, humidifier) do not judge a run that overlaps an output fault or the 30 min after
+  it, and a long run's window starts again when it cannot be judged. FAN_STALL is not raised while the guard holds the
+  outputs or for 60 s after.
+- A TEMP_HIGH_CRITICAL record carries the limit that made it critical (15.6 °C, or the band after 2 h), so its peak is
+  never below its own limit.
+
+`TestOutputWriteFaultOpensContactThroughGuard` (an hour's fault in a room 12 °C warmer) and
+`TestAfterADropNoBriefCloseAndTheBuzzerSounds` hold this.

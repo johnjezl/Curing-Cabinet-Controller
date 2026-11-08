@@ -1423,15 +1423,24 @@ func TestOutputWriteFaultOpensContactThroughGuard(t *testing.T) {
 	if !r.Plant.CmdAlarm {
 		t.Fatal("healthy contact should be energized")
 	}
+	r.Plant.AmbientOffset = 12 // the air climbs while nothing can switch
 	r.Plant.Inject(sim.DevOutputs, sim.FaultWriteErr, 0)
 	r.Advance(30)
 	if r.Plant.CmdAlarm || r.Plant.CmdCool || r.Plant.CmdHeat {
 		t.Fatal("the guard should have dropped everything when writes fail")
 	}
+	r.Advance(3600)
 	r.Plant.Inject(sim.DevOutputs, sim.FaultNone, 0)
 	r.Advance(600)
-	if alarmEvents(r, core.CodeOutDropped) == 0 {
-		t.Fatal("drop not reported after repair")
+	// The drop was core's own hold, reported as OUTPUT_FAULT. It is not a stalled loop,
+	// and the parts are not blamed for what the guard did (integration defect 4).
+	if alarmEvents(r, core.CodeOutputFault) == 0 {
+		t.Fatal("output fault not reported")
+	}
+	for _, code := range []string{core.CodeOutDropped, core.CodeFanStall, core.CodeCoolFail} {
+		if n := alarmEvents(r, code); n != 0 {
+			t.Errorf("%s raised %d times across an output fault", code, n)
+		}
 	}
 	if r.Plant.FanDuty == 0 {
 		t.Fatal("control did not resume")

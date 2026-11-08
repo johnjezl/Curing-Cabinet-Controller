@@ -375,6 +375,47 @@ func TestSystemEventSurvivesANewProcess(t *testing.T) {
 	}
 }
 
+// Integration defect 4, re-test: after the guard drop that ends an output fault, the
+// contact stays open until control has proved itself again, with no brief close for the
+// alarms that arrive meanwhile, and the buzzer sounds for a critical alarm throughout.
+func TestAfterADropNoBriefCloseAndTheBuzzerSounds(t *testing.T) {
+	a, f, l, _, clock := testAnn()
+	var edges uint64
+	a.coreEdges = func() uint64 { return edges }
+	_ = f.Set(hal.OutAlarm, true)
+	_ = f.Set(hal.OutBuzzer, true) // silent
+	*clock = clock.Add(armDelay)
+	a.Tick(*clock, api.QualityOK)
+	if !l.alarm {
+		t.Fatal("setup: not armed")
+	}
+	// A critical alarm stands: core opens the contact and sounds the buzzer.
+	_ = f.Set(hal.OutAlarm, false)
+	_ = f.Set(hal.OutBuzzer, false)
+	a.Dropped()
+	for i := 0; i < int(armDelay/time.Second); i++ {
+		if i == 1 {
+			edges++ // a new alarm while the relay must prove health again
+		}
+		*clock = clock.Add(time.Second)
+		a.Tick(*clock, api.QualityOK)
+		armed, closed, buzz := a.State()
+		if closed {
+			t.Fatalf("contact closed %d s after a drop (armed %v)", i+1, armed)
+		}
+		if !buzz {
+			t.Fatalf("buzzer silent %d s after a drop with a critical alarm standing", i+1)
+		}
+	}
+	for i := 0; i < 30; i++ {
+		*clock = clock.Add(time.Second)
+		a.Tick(*clock, api.QualityOK)
+		if _, closed, buzz := a.State(); closed || !buzz {
+			t.Fatalf("after re-arming, with core still calling: closed %v buzzer %v", closed, buzz)
+		}
+	}
+}
+
 // Integration defect 5, second re-test: the simulator's control tool says what happened,
 // in words: a re-sent fault restarts, a text value is not a number, an unknown name lists
 // what would work, and repairing everything lists what was repaired.

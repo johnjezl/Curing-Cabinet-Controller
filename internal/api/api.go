@@ -37,6 +37,9 @@ type Reading struct {
 	// panel uses it for a "no alarm yet" headline, so a compressor run's passing dip
 	// does not raise one, and shows Value.
 	Avg float64 `json:"avg,omitempty"`
+	// Doubt marks a reading suspected from how the cabinet behaves (ADR 0109). Control
+	// still uses it; only heat and humidity are held off (ADR 0113).
+	Doubt bool `json:"doubt,omitempty"`
 }
 
 type Setpoints struct {

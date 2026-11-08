@@ -78,3 +78,72 @@ func TestEachFailedPartIsNamedAndNoneAccusedFalsely(t *testing.T) {
 		})
 	}
 }
+
+// Integration defect 1, re-test: once the sensor cross-check has its three days of
+// history, a warmer room, a compressor repaired in a hot room, or an output fault must not
+// accuse the healthy sensor. A reading drifting low, the warm direction, is still caught
+// within hours (ADR 0109, 0113).
+func TestNoSensorAccusedAfterARoomChangeOrARepair(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		run  func(r *sim.Run)
+	}{
+		{"room 12 warmer for 10 h", func(r *sim.Run) {
+			r.Plant.AmbientOffset = 12
+			r.Advance(10 * 3600)
+			r.Plant.AmbientOffset = 0
+		}},
+		{"room 6 warmer for 10 h", func(r *sim.Run) {
+			r.Plant.AmbientOffset = 6
+			r.Advance(10 * 3600)
+			r.Plant.AmbientOffset = 0
+		}},
+		{"compressor repaired in a hot room", func(r *sim.Run) {
+			r.Plant.AmbientOffset = 12
+			r.Advance(4.8 * 3600)
+			r.Plant.Inject(sim.DevCompressor, sim.FaultNoCool, 0)
+			r.Advance(6 * 3600)
+			r.Plant.Inject(sim.DevCompressor, sim.FaultNone, 0)
+			r.Advance(10 * 3600)
+			r.Plant.AmbientOffset = 0
+		}},
+		{"output fault for an hour", func(r *sim.Run) {
+			r.Plant.Inject(sim.DevOutputs, sim.FaultWriteErr, 0)
+			r.Advance(3600)
+			r.Plant.Inject(sim.DevOutputs, sim.FaultNone, 0)
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRun(t)
+			r.SetPoint(13, 76, 1.0)
+			r.Advance(4 * 86400)
+			r.Evs = nil
+			t0 := r.Clock.VT
+			c.run(r)
+			r.Advance(4 * 86400)
+			for _, e := range r.Evs {
+				if e.Kind == "alarm" && (e.Code == "TEMP_READING_DISAGREES" || e.Code == "RH_READING_DISAGREES") {
+					t.Errorf("healthy sensor accused: %s at %.1f h", e.Code, (e.T-t0)/3600)
+				}
+			}
+		})
+	}
+	t.Run("reading drifting low is still caught", func(t *testing.T) {
+		r := newRun(t)
+		r.SetPoint(13, 76, 1.2)
+		r.Advance(5 * 86400)
+		r.Evs = nil
+		t0 := r.Clock.VT
+		r.Plant.Inject(sim.DevTemp, sim.FaultDrift, -1)
+		r.Advance(12 * 3600)
+		for _, e := range r.Evs {
+			if e.Kind == "alarm" && e.Code == "TEMP_READING_DISAGREES" {
+				if h := (e.T - t0) / 3600; h > 8 {
+					t.Errorf("caught after %.1f h, want within 8", h)
+				}
+				return
+			}
+		}
+		t.Error("a reading drifting low at 1 °C/h was not caught in 12 h")
+	})
+}

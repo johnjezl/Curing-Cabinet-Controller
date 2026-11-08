@@ -116,18 +116,22 @@ type Core struct {
 	crossRateSoft                      bool
 	dropped                            bool
 	outErrSince                        float64
-	driftClearT, rhDriftClearT         float64
-	lastHeatOn, lastHumOn              float64
-	heatStuck, humOnStuck              bool
-	compRecent                         ema // compressor on-time over the last half hour or so
-	humSat                             ema // share of the last 20 min or so at saturation with the humidifier off
-	tRing, dewRing                     [7]float64
-	tRingT                             float64
-	stuckClearT, humStuckClearT        float64
-	humSatSince, coolOffDew0           float64
-	lastEquipFaultT                    float64
-	heatEffort, heatEvalT, heatEvalT0  float64
-	heatFailing                        bool
+	// leaseHeld is true while core withholds the guard's lease because outputs cannot
+	// be written; lastOutErrT is the last moment outputs were not known to follow
+	// commands. Effect checks do not judge equipment across that time.
+	leaseHeld                         bool
+	lastOutErrT                       float64
+	driftClearT, rhDriftClearT        float64
+	lastHeatOn, lastHumOn             float64
+	heatStuck, humOnStuck             bool
+	compRecent                        ema // compressor on-time over the last half hour or so
+	humSat                            ema // share of the last 20 min or so at saturation with the humidifier off
+	tRing, dewRing                    [7]float64
+	tRingT                            float64
+	stuckClearT, humStuckClearT       float64
+	humSatSince, coolOffDew0          float64
+	heatEffort, heatEvalT, heatEvalT0 float64
+	heatFailing                       bool
 
 	// outputs
 	fanOut, lastFanOut  float64
@@ -538,12 +542,18 @@ func (c *Core) Step() {
 			c.mu.Lock()
 			c.wdOK = err == nil
 			if errors.Is(err, hal.ErrOutputsDropped) {
-				c.outputsDropped()
+				// After a hold core chose, the drop is the expected end of it, already
+				// reported as OUTPUT_FAULT: not a stalled loop (integration defect 4).
+				c.outputsDropped(!c.leaseHeld)
+			}
+			if err == nil || errors.Is(err, hal.ErrOutputsDropped) {
+				c.leaseHeld = false
 			}
 			c.mu.Unlock()
 		} else {
 			c.mu.Lock()
 			c.wdOK = false
+			c.leaseHeld = true
 			c.mu.Unlock()
 		}
 	}
@@ -552,8 +562,9 @@ func (c *Core) Step() {
 // outputsDropped handles the hardware guard having cut everything. All outputs are
 // off from this moment, whatever was last commanded, so the off-timers start now.
 // Otherwise the next re-assert could restart a compressor that has only just
-// stopped. Caller holds the lock.
-func (c *Core) outputsDropped() {
+// stopped. Caller holds the lock. With raise false the drop was core's own hold, and
+// only the bookkeeping is done.
+func (c *Core) outputsDropped(raise bool) {
 	for k := range c.applied {
 		delete(c.applied, k)
 	}
@@ -567,6 +578,12 @@ func (c *Core) outputsDropped() {
 	c.ctl.humOn = false
 	c.runActive = false
 	c.reassertT = c.t
+	c.lastOutErrT = c.t
+	if !raise {
+		c.event(Event{Type: EvDropped, Msg: "outputs restored after the output fault; the guard had held them off"})
+		c.saveSoon()
+		return
+	}
 	if a := c.al.active[CodeOutDropped]; a != nil {
 		c.clear(CodeOutDropped)
 	}
@@ -1161,10 +1178,10 @@ func (c *Core) Snapshot() api.Snapshot {
 	}
 	// A suspicion shows on the reading. Control goes on using it.
 	if c.st.TDoubtUntil != 0 && s.Temp.Quality == api.QualityOK {
-		s.Temp.Quality, s.Temp.Note = api.QualitySuspect, "disagrees with how the cabinet is behaving; check with a separate thermometer"
+		s.Temp.Quality, s.Temp.Note, s.Temp.Doubt = api.QualitySuspect, "in doubt: check it with a thermometer", true
 	}
 	if c.st.RHDoubtUntil != 0 && s.RH.Quality == api.QualityOK {
-		s.RH.Quality, s.RH.Note = api.QualitySuspect, "disagrees with how the cabinet is behaving; check with a separate hygrometer"
+		s.RH.Quality, s.RH.Note, s.RH.Doubt = api.QualitySuspect, "in doubt: check it with a hygrometer", true
 	}
 	s.Air = reading(c.chAir, c.airF.v, t)
 	if c.scaleCal() {
@@ -1370,10 +1387,10 @@ func (c *Core) outputStatus() []api.OutputStatus {
 		cool = st(co, true, "stuck", "relay appears stuck closed: the air falls with the compressor commanded off")
 	}
 	if c.al.active[CodeHeatStuck] != nil {
-		heat = st(he, true, "stuck", "appears stuck on: the compressor runs nearly all the time with the heater off and the air does not come down")
+		heat = st(he, true, "stuck", "appears stuck on: the compressor ran nearly all the time with the heater off and the air did not come down")
 	}
 	if c.al.active[CodeHumidOnStuck] != nil {
-		hum = st(hu, true, "stuck", "appears stuck on: humidity is near saturation with the humidifier off")
+		hum = st(hu, true, "stuck", "appears stuck on: humidity stayed near saturation with the humidifier off")
 	}
 	// A failed write leaves every relay where it was, or wherever the guard put it:
 	// nothing here can say which (ADR 0407).

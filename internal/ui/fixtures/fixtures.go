@@ -425,15 +425,15 @@ func All() []Fixture {
 			s.Active = []api.Alarm{alarm("TEMP_HIGH", api.SevCritical, "Temperature far above setpoint", "Find the cause now. Inspect product and judge it by your own process plan.", 18*time.Minute, 17.2, 16, "°C")}
 		})},
 		{Name: "reading-in-doubt", Make: with(func(s *api.Snapshot) {
-			s.Temp = api.Reading{Value: 14.8, Quality: api.QualitySuspect, AgeSec: 1, Note: "disagrees with cabinet"}
+			// Control still follows a reading in doubt; only heat and humidity are held (ADR 0113).
+			s.Temp = api.Reading{Value: 14.8, Quality: api.QualitySuspect, AgeSec: 1, Note: "in doubt: check it with a thermometer", Doubt: true}
 			s.Outputs.Heat, s.Outputs.Humid = false, false
-			s.Outputs.Holds = []api.Hold{{Output: "heat", Reason: "temperature data is bad"}, {Output: "humid", Reason: "temperature data is bad"}}
 			s.Outputs.Status = []api.OutputStatus{
-				{Output: "cool", On: true, Reason: "running a blind pattern: temperature data is bad", Kind: "fault"},
-				{Output: "heat", Reason: "locked off: temperature data is bad", Kind: "fault"},
-				{Output: "humid", Reason: "locked off: temperature or humidity data is bad", Kind: "fault"},
+				{Output: "cool", On: true, Reason: "running", Kind: "normal"},
+				{Output: "heat", Reason: "locked off while a reading is in doubt: only cooling is allowed", Kind: "hold"},
+				{Output: "humid", Reason: "locked off while a reading is in doubt", Kind: "hold"},
 			}
-			s.Active = []api.Alarm{alarm("TEMP_READING_DISAGREES", api.SevCritical, "Temperature reading disagrees with how the cabinet is behaving", "Compare with a separate thermometer and enter the result. Product may be warmer or colder than shown.", 25*time.Minute, 0, 0, "")}
+			s.Active = []api.Alarm{alarm("TEMP_READING_DISAGREES", api.SevCritical, "Cabinet effort changed with no change in the reading", "The reading may have drifted, or the room changed sharply. Check with a thermometer and enter it. Heat and humidity held off; clears after a check or 48 h.", 25*time.Minute, 0, 0, "")}
 		})},
 		{Name: "reference-disagrees", Make: with(func(s *api.Snapshot) {
 			s.Temp = api.Reading{Value: 14.8, Quality: api.QualitySuspect, AgeSec: 1}

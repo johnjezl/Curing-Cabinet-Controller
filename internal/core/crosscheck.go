@@ -48,6 +48,18 @@ func (c *Core) crossTick(dt float64) {
 		x.start = t
 	}
 	ctl := &c.ctl
+	// A part known to misbehave, or one just repaired, makes a different cabinet from
+	// the one the history describes: a stuck relay or a dead compressor changes effort
+	// for its own reasons. History starts again, as it does for a new setpoint
+	// (integration defect 1). Judged every tick, so a fault that comes and goes inside
+	// an hour, or while the checks are not yet running, still counts.
+	// A suspicion that holds heat and humidity off runs the cabinet differently too, and
+	// its hours would later read as a change of their own.
+	if c.equipmentFault() || c.st.TDoubtUntil != 0 || c.st.RHDoubtUntil != 0 {
+		c.crossReset()
+		x.start = t
+		return
+	}
 	if !ctl.defrost {
 		x.n += dt
 		if ctl.comp.on {
@@ -104,6 +116,7 @@ func (c *Core) crossReset() {
 	c.st.Cross = c.st.Cross[:0]
 	c.st.CrossBase = nil
 	c.cross = crossAcc{}
+	c.crossTempSoft, c.crossRHSoft, c.crossRateSoft = false, false, false
 }
 
 // lossPerDay is the least-squares weight loss in percent per day; ok is false if a
@@ -158,13 +171,6 @@ func (c *Core) crossEval() {
 		}
 	}
 	if float64(inBand) < 0.8*float64(lookback) {
-		c.crossTempSoft, c.crossRHSoft, c.crossRateSoft = false, false, false
-		return
-	}
-	// A part already known to misbehave explains any change in effort: a humidifier
-	// stuck on brings reheat, a compressor that does not cool brings heat, and the
-	// sensor is not to blame for either (integration defect 1).
-	if c.equipmentFault() {
 		c.crossTempSoft, c.crossRHSoft, c.crossRateSoft = false, false, false
 		return
 	}
@@ -261,8 +267,7 @@ func (c *Core) crossEval() {
 		c.latchSensor(true, "reading may be low: "+note)
 	case haveR && r <= 0.7 && dN >= 0.03,
 		!doorNear && haveRF && rf <= 0.75 && dY >= both,
-		haveRL && rl <= 0.6 && fzN >= 0.03,
-		fastHigh:
+		haveRL && rl <= 0.6 && fzN >= 0.03:
 		c.latchSensor(true, "reading may be high: "+note)
 	case haveR && r <= 0.7 && (dH >= 0.01 || dD <= -0.03),
 		haveRL && rl <= 0.55 && (fzH >= 0.01 || fzD <= -0.03):
@@ -272,22 +277,23 @@ func (c *Core) crossEval() {
 		c.latchSensor(false, "reading may be high: "+note)
 	}
 
-	// One signal alone: a warning that asks for a check, and changes nothing.
-	c.crossTempSoft = math.Abs(dN) >= 0.10 || math.Abs(fzN) >= 0.07
+	// One signal alone: a warning that asks for a check, and changes nothing. More cooling
+	// than yesterday on effort alone is a warmer room as often as a sensor reading high,
+	// and a reading high is the cold, food-safe side, so it only asks (integration
+	// defect 1: a room 6 °C warmer was enough to accuse a healthy sensor).
+	c.crossTempSoft = math.Abs(dN) >= 0.10 || math.Abs(fzN) >= 0.07 || fastHigh
 	c.crossRHSoft = dD >= 0.06 || dH >= 0.03 || fzD >= 0.07 || fzH >= 0.03
 	c.crossRateSoft = haveR && (r >= 1.4 || r <= 0.6)
 }
 
-// equipmentFault says whether a part is known to be misbehaving, or was in the last
-// six hours.
+// equipmentFault says whether a part is known to be misbehaving now.
 func (c *Core) equipmentFault() bool {
 	for _, code := range []string{CodeHeatStuck, CodeHumidOnStuck, CodeCoolFail, CodeCoolStuck, CodeHeatFail, CodeHumidFail, CodeOutputFault, CodeFanStall} {
 		if c.al.active[code] != nil {
-			c.lastEquipFaultT = c.t
 			return true
 		}
 	}
-	return c.lastEquipFaultT != 0 && c.t-c.lastEquipFaultT < 6*3600
+	return c.leaseHeld
 }
 
 func maxInt(a, b int) int {

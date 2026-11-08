@@ -25,7 +25,7 @@ var alarmDefs = map[string]alarmDef{
 	CodeTempAbsHigh:  {api.SevCritical, "Temperature over absolute limit", "Inspect product and judge it by your own process plan. Find the cause before continuing.", "°C"},
 	CodeTempAbsLow:   {api.SevCritical, "Temperature near freezing", "Check whether the compressor relay is stuck on. Product may freeze.", "°C"},
 	CodeRHHigh:       {api.SevWarning, "Humidity high", "Check the door, the humidifier and for a wet load. Check the drain.", "%RH"},
-	CodeRHLow:        {api.SevWarning, "Humidity low", "Refill the humidifier. Check the door seal.", "%RH"},
+	CodeRHLow:        {api.SevWarning, "Humidity low", "Check the door seal and that the humidifier has water and runs. Heat running when it is not needed also dries the air.", "%RH"},
 	CodeAirLow:       {api.SevWarning, "Airflow low", "Check the manifold and filter for blockage. Check the fan.", "m/s"},
 	CodeAirHigh:      {api.SevInfo, "Airflow above target", "The fan cannot go slower. Lower resistance or accept the higher flow.", "m/s"},
 	CodeDoorOpen:     {api.SevWarning, "Door open too long", "Close the door.", "s"},
@@ -36,7 +36,7 @@ var alarmDefs = map[string]alarmDef{
 	CodeRHSuspect:    {api.SevCritical, "Humidity reading looks wrong", "Check the sensor. Humidity control is off; temperature control continues.", "%RH"},
 	CodeTempErratic:  {api.SevWarning, "Temperature sensor giving bad samples", "Check the wiring. Bad samples are being rejected.", ""},
 	CodeRHErratic:    {api.SevWarning, "Humidity sensor giving bad samples", "Check the wiring. Bad samples are being rejected.", ""},
-	CodeTempDrift:    {api.SevWarning, "Temperature sensor may have drifted", "Cooling effort shifted with no change in the reading. Check against a separate thermometer. A warm room also causes this.", ""},
+	CodeTempDrift:    {api.SevWarning, "Temperature sensor may have drifted", "Cooling effort shifted with no change in the reading. Check against a separate thermometer. A change of room temperature also causes this.", ""},
 	CodeRHDrift:      {api.SevWarning, "Humidity sensor may have drifted", "Humidifying effort shifted with no change in the reading. Check against a separate hygrometer.", ""},
 	CodeAirFault:     {api.SevWarning, "Airflow sensor not reading", "Check the FS3000 cable. The fan holds its last good speed.", ""},
 	CodeAirSuspect:   {api.SevWarning, "Airflow reading looks wrong", "Check the FS3000. The fan holds its last good speed.", "m/s"},
@@ -261,8 +261,20 @@ func (c *Core) evalAlarms(dt float64) {
 		} else if ts < hi-cfg.TempClearDiff {
 			c.aboveBandT = 0
 		}
+		// The record carries the limit that made it critical, so its peak is never under it.
+		critLim := set.TempC + 2*lim.TempHighDelta
+		switch {
+		case ts > critLim:
+		case set.TempC < 15.6 && ts > 15.6 && ts > hi:
+			critLim = math.Max(15.6, hi)
+		default:
+			critLim = hi // over the band for 2 h
+		}
 		crit := !suppressedT && (ts > set.TempC+2*lim.TempHighDelta || (set.TempC < 15.6 && ts > 15.6 && ts > hi) || (c.aboveBandT != 0 && t-c.aboveBandT >= 7200))
-		c.timed(CodeTempHighCrit, crit, ts < hi-cfg.TempClearDiff, delay, ts, set.TempC+2*lim.TempHighDelta)
+		if a := c.al.active[CodeTempHighCrit]; a != nil {
+			critLim = a.a.Limit // one record, one limit
+		}
+		c.timed(CodeTempHighCrit, crit, ts < hi-cfg.TempClearDiff, delay, ts, critLim)
 		c.timed(CodeTempLow, ts < lo && !suppressedT, ts > lo+cfg.TempClearDiff, delay, ts, lo)
 		// Absolute limits are never suppressed.
 		c.timed(CodeTempAbsHigh, ts > lim.AbsTempHighC, ts < lim.AbsTempHighC-cfg.TempClearDiff, 300, ts, lim.AbsTempHighC)
@@ -301,7 +313,13 @@ func (c *Core) evalAlarms(dt float64) {
 	c.timed(CodeAirSuspect, airSus, !airSus, 0, c.chAir.val, 0)
 
 	// Fan cross-checks: tach against airflow.
-	c.timed(CodeFanStall, ctl.stall, !ctl.stall, 0, 0, 0)
+	// While outputs are held off, or just back, the guard has stopped the fan: that is the
+	// output fault, already alarmed, not the fan (integration defect 4).
+	if c.outputErr != "" || c.leaseHeld {
+		c.lastOutErrT = t
+	}
+	outputsBack := c.lastOutErrT == 0 || t-c.lastOutErrT > 60
+	c.timed(CodeFanStall, ctl.stall && outputsBack, !ctl.stall, 0, 0, 0)
 	tachBad := !c.rpmOK || (c.rpm < 150 && c.chAir.ok() && c.airF.v >= 0.3)
 	c.timed(CodeFanTach, tachBad, !tachBad, 60, 0, 0)
 	// Rotor turning with no air: duct blocked or a sensor reading zero. These
@@ -370,7 +388,10 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	t := c.t
 	const coolWindow = 1200.0
 	tOK := c.chT.quality == api.QualityOK
-	quiet := !c.doorOpen && !ctl.defrost && t >= ctl.dripUntil && (ctl.defrostEnd == 0 || t-ctl.defrostEnd > 1800) && t-c.lastTBadT > 3600
+	// Across an output fault nothing followed its command, so no run says anything about
+	// the part (integration defect 4).
+	quiet := !c.doorOpen && !ctl.defrost && t >= ctl.dripUntil && (ctl.defrostEnd == 0 || t-ctl.defrostEnd > 1800) && t-c.lastTBadT > 3600 &&
+		(c.lastOutErrT == 0 || t-c.lastOutErrT > 1800)
 	if c.chT.quality != api.QualityOK {
 		c.lastTBadT = t
 	}
@@ -403,8 +424,11 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 		if ctl.comp.on {
 			c.runEnd = t
 			// A long run with no fall counts as failure on its own, heater or not:
-			// a heater that wins against the compressor is also not cooling.
-			if tOK && quiet && t-c.runContT >= 900 {
+			// a heater that wins against the compressor is also not cooling. The window
+			// starts again whenever the run cannot be judged.
+			if !tOK || !quiet {
+				c.runContT, c.runContT0, c.runContDew0 = t, c.tF.v, dew
+			} else if t-c.runContT >= 900 {
 				condensing := !math.IsNaN(dew) && !math.IsNaN(c.runContDew0) && dew <= c.runContDew0-0.5
 				// A heater already shown stuck on explains a compressor that cannot win.
 				if c.tF.v > c.runContT0-0.2 && c.tF.v > set.TempC+0.3 && !condensing && !c.heatStuck {

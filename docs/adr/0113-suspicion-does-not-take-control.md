@@ -60,3 +60,9 @@ reading can still ask for more cooling, but it can no longer stop it. Learning o
 any temperature suspicion stands. A false low suspicion on a healthy cabinet therefore cools it by up to the
 blind pattern's error until the suspicion ends (48 h after its last evidence); this is measured in the fault-free
 sweep.
+
+## Third amendment (integration defect 1, re-test)
+See ADR 0114's amendment: history restarts while a suspicion holds heat and humidity off, so the hours it changes
+cannot later be read as a change of their own, and more cooling than yesterday on effort alone only warns. A reading in
+doubt is marked as such in the snapshot (`doubt`), and the panel says heat and humidity are held instead of calling it
+lost feedback.

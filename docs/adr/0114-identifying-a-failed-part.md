@@ -64,3 +64,34 @@ this ADR.
   by ADR 0109's design. Its effect moves the cabinet toward cold, and its text now names both causes.
 - Nothing here sees a stuck relay faster than its signature allows: a heater the compressor can beat is found only by
   the duty it costs, after the cabinet has steadied.
+
+## Amendment after the first re-test
+Identification passed every trial. The failure was the sensor check: 238 min after a compressor was repaired in a room
+12 °C warmer, TEMP_READING_DISAGREES (critical, "reading may be low") marked the healthy sensor in doubt and held heat
+and humidity off for 48 h, the cabinet at 11.7 °C mean against 13 °C. The 6 h gate above was updated only when the
+check ran, and it does not run in a setpoint's first 72 h or with the cabinet out of band, which is exactly when a
+compressor fault happens. Measured afterwards on the simulator with 4 days of history, any warmer room of 6 to 12 °C
+raised the critical within 4 to 6 h by itself, from the fast comparison with the same hours yesterday.
+
+Changes:
+- **History restarts while a part is known to misbehave**, judged every step, and while a suspicion holds heat and
+  humidity off. A repaired or failing part makes a different cabinet from the one the history describes, and so does a
+  held-off heater. This replaces the 6 h gate. Checks resume 72 h after, as after a new setpoint.
+- **More cooling than yesterday, on effort alone, is a warning** (TEMP_DRIFT_SUSPECT, which names a room change as a
+  cause), not a critical: a warmer room does exactly this, and a reading high is the cold, food-safe side. Less cooling
+  than yesterday, the sign of a reading drifting low, keeps the critical: without it a reading falling 1 °C/h is caught
+  at 17 h instead of 5 h, and the product reaches +22 °C instead of +4 °C. A room 10 °C colder still raises it, within
+  2 h; the alarm says the room may have changed, and its action moves the cabinet toward cold.
+- The panel shows a reading in doubt as "READING IN DOUBT: HEAT, HUMID HELD", not "NO TEMP FEEDBACK": the compressor
+  still follows it.
+- Wrong-cause text: RH_LOW no longer says "Refill the humidifier" alone (heat also dries the air), a defrost cut short
+  while the heater is shown stuck on is not counted as ice, and a STUCK chip's reason is in the past tense, since it
+  stays latched after the evidence ends.
+
+Measured (base plant, 13 °C, 4 days of history, 4 days observed): room +6 or +12 °C for 10 or 30 h, a compressor
+repaired in that room, an output fault of 1 h: no sensor critical (TEMP_DRIFT_SUSPECT once, 16 h after a +12 °C room).
+Room -10 °C for 12 h: TEMP_READING_DISAGREES at 2 h. Reading drifting at 1 °C/h: low caught at 5 h (13 °C) and 6 h (4 °C),
+unchanged; high now critical at 19 h instead of 6 h, warned at 18 h. Slow drifts unchanged. Detection of a slow drift
+already took days (-0.1 °C/h: 66 h), and this does not improve it. `TestNoSensorAccusedAfterARoomChangeOrARepair`
+holds the cases above.
+

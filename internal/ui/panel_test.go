@@ -83,6 +83,13 @@ func mustContain(t *testing.T, a *ui.Audit, want string) {
 	}
 }
 
+func mustNotContain(t *testing.T, a *ui.Audit, bad string) {
+	t.Helper()
+	if strings.Contains(strings.Join(strings.Fields(allText(a)), " "), bad) {
+		t.Fatalf("screen shows %q; it has:\n%s", bad, allText(a))
+	}
+}
+
 func auditHome(h *uitest.Harness) *ui.Audit {
 	a := &ui.Audit{}
 	h.Panel.SetAudit(a)
@@ -723,12 +730,17 @@ func TestOutputReasonsAreShown(t *testing.T) {
 	a = auditHome(h)
 	mustContain(t, a, "OFF HOLD")
 	mustContain(t, a, "minimum off time, 2:35 left")
+	// A reading in doubt still runs the compressor; heat and humidity are held, and the
+	// panel does not call that lost feedback (integration defect 1, re-test).
 	f, _ = fixtures.Find("reading-in-doubt")
 	h = uitest.ForFixture(f, ui.Config{})
-	mustContain(t, auditHome(h), "HEAT FAULT")
+	a = auditHome(h)
+	mustContain(t, a, "HEAT HOLD")
+	mustContain(t, a, "READING IN DOUBT")
+	mustNotContain(t, a, "NO TEMP FEEDBACK")
 	tap(t, h, "nav.more")
 	tap(t, h, "more.outputs")
-	mustContain(t, auditHome(h), "ON FAULT")
+	mustContain(t, auditHome(h), "locked off while a reading is in doubt")
 }
 
 func TestSetpointNeedsSaveAndCancelDiscards(t *testing.T) {

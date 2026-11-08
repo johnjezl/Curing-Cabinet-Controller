@@ -133,7 +133,9 @@ func (a *annunciator) tick(now time.Time, temp api.Quality, hold bool) {
 		}
 	}
 	a.prevSys = sysCall
-	if newEdge && !a.contactClosed {
+	// Not yet armed, the contact is open and may not close, not even briefly: health is
+	// not proven. The opening that follows arming carries the news.
+	if newEdge && !a.contactClosed && a.armed {
 		a.edgeUntil = now.Add(edgeFor)
 	}
 	inEdge := now.Before(a.edgeUntil)
