@@ -149,6 +149,7 @@ subcommands:
   sim-reset                    stop the unit and wipe the simulator's state
   status                       unit state, NRestarts and /run/curing-cured/status.json
   lines                        what any process asked of the output guard (recorder log)
+  lines-selftest               positive control: a real-mode post-stop must show up in lines
   journal <n>                  last n journal lines of the unit
   screenshot <out.png>         the panel framebuffer as a PNG
   boot-id                      the sandbox's boot ID
@@ -225,6 +226,16 @@ case "$cmd" in
     case "$inj" in panic-control|hang-control) ;; *) exit 2 ;; esac
     lock
     timeline simctl inject "$inj"
+    ;;
+  lines-selftest)
+    # Positive control for "lines": the real-mode post-stop asks the guard for all-off,
+    # so the recorder must log it. If it does not, "lines" proves nothing.
+    lock; make_tree; guard_up
+    before=$(grep -c ' asked: ' "$L/guard.log" 2>/dev/null || true)
+    $(sandbox) "$L/bin/cured" post-stop >/dev/null 2>&1 || true
+    after=$(grep -c ' asked: ' "$L/guard.log" 2>/dev/null || true)
+    echo "requests before=${before:-0} after=${after:-0}"
+    [ "${after:-0}" -gt "${before:-0}" ] && echo "recorder sees guard requests: OK" || { echo "recorder saw nothing: lines is not evidence"; exit 1; }
     ;;
   hashes) sha256sum "$L/bin/cured" "$L/bin/fbshot" 2>/dev/null; "$L/bin/cured" version ;;
   sim-state) simctl state ;;

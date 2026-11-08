@@ -18,18 +18,16 @@ def serve(c, n):
             d = c.recv(4096)
             if not d:
                 break
-            buf += d
-            while b"\n" in buf:
-                line, buf = buf.split(b"\n", 1)
-                note("client %d asked: %s" % (n, line.decode(errors="replace")))
-                c.sendall(b"err recorder: there are no relay lines on this bench\n")
+            # One request per packet; a trailing newline is tolerated.
+            note("client %d asked: %s" % (n, d.decode(errors="replace").rstrip("\n")))
+            c.send(b"err recorder: there are no relay lines on this bench")
     finally:
         note("client %d closed" % n)
         c.close()
 log = os.path.abspath(log)
 os.chdir(os.path.dirname(os.path.abspath(path)))  # socket paths are limited to 108 bytes
 name = os.path.basename(path)
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)  # the guard's own socket type
 s.bind(name); os.chmod(name, 0o666); s.listen(8)
 note("recorder listening at /run/curing-outputs/guard.sock")
 n = 0
