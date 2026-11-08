@@ -55,7 +55,7 @@ func main() {
 	case "panel":
 		runPanel(args)
 	case "stopped":
-		if err := ui.PaintStopped(ui.DefaultFramebuffer); err != nil {
+		if err := ui.PaintStopped(ui.DefaultFramebuffer, false); err != nil {
 			log.Fatal(err)
 		}
 	default:

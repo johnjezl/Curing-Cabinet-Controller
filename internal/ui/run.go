@@ -101,7 +101,7 @@ func commandWorker(ctx context.Context, ctl api.Controller, in <-chan api.Comman
 // freezeWatch replaces the screen if frames stop, whatever stopped them. The
 // render loop cannot report its own hang, so this runs beside it. It paints the
 // notice once on entering the state and then every 5 s while it lasts.
-func freezeWatch(ctx context.Context, d NoticeDisplay, after time.Duration, last *atomic.Int64) {
+func freezeWatch(ctx context.Context, d NoticeDisplay, after time.Duration, last *atomic.Int64, sim bool) {
 	t := time.NewTicker(after / 5)
 	defer t.Stop()
 	var painted time.Time
@@ -117,7 +117,7 @@ func freezeWatch(ctx context.Context, d NoticeDisplay, after time.Duration, last
 			}
 			if painted.IsZero() || now.Sub(painted) >= 5*time.Second {
 				log.Printf("ui: no frame for %s: painting frozen notice", age.Round(time.Second))
-				if err := d.PaintNotice(FrozenFrame()); err != nil {
+				if err := d.PaintNotice(FrozenFrameFor(sim)); err != nil {
 					log.Printf("ui: frozen notice: %v", err)
 				}
 				painted = now
@@ -193,7 +193,7 @@ func RunLoop(ctx context.Context, ctl api.Controller, cfg Config, disp Display, 
 	last.Store(time.Now().UnixNano())
 	nd, canNotice := disp.(NoticeDisplay)
 	if canNotice {
-		go freezeWatch(ctx, nd, cfg.FrozenAfter, &last)
+		go freezeWatch(ctx, nd, cfg.FrozenAfter, &last, cfg.Simulated)
 	}
 	// The loop runs in its own goroutine so a display stuck in Present cannot hold up
 	// a service stop. If it is stuck, it is simply abandoned when the process exits.
@@ -217,7 +217,7 @@ func RunLoop(ctx context.Context, ctl api.Controller, cfg Config, disp Display, 
 		log.Printf("ui: display did not return; stopping anyway")
 	}
 	if canNotice {
-		if err := nd.PaintNotice(StoppedFrame()); err != nil {
+		if err := nd.PaintNotice(StoppedFrameFor(cfg.Simulated)); err != nil {
 			log.Printf("ui: stopped notice: %v", err)
 		}
 	}

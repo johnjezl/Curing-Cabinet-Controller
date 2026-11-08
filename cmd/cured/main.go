@@ -49,7 +49,15 @@ func main() {
 			fmt.Println(version)
 			return
 		case "post-stop":
-			postStop(len(args) > 1 && args[1] == "--sim")
+			switch {
+			case len(args) == 1:
+				postStop(false)
+			case len(args) == 2 && args[1] == "--sim":
+				postStop(true)
+			default:
+				logfJ("<3>cured post-stop: unexpected arguments %q; only --sim is accepted", args[1:])
+				os.Exit(2)
+			}
 			return
 		case "simctl":
 			os.Exit(simctlMain(args[1:]))
@@ -137,7 +145,7 @@ func postStop(sim bool) {
 	}
 	// A dead process's status must not read as live.
 	_ = os.Remove(statusFile)
-	if err := ui.PaintStopped(ui.DefaultFramebuffer); err != nil {
+	if err := ui.PaintStopped(ui.DefaultFramebuffer, sim); err != nil {
 		logfJ("<4>cured post-stop: panel: %v", err)
 	} else {
 		logfJ("<5>cured post-stop: panel painted stopped uptime=%.2f", uptimeNow())

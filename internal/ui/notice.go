@@ -19,15 +19,42 @@ func noticeFrame(title, line1, line2 string) *image.RGBA {
 	return c.Img
 }
 
+// simNoticeFrame is the notice a simulation leaves on the panel: purple, with the
+// simulation band top and bottom, and no instruction to go and check a cabinet that
+// was never being controlled (ADR 0406).
+func simNoticeFrame(title, line1 string) *image.RGBA {
+	c := NewCanvas()
+	c.Fill(c.Img.Bounds(), colSim)
+	for _, r := range []image.Rectangle{rect(0, 0, ScreenW, simBandH), rect(0, ScreenH-simBandH, ScreenW, ScreenH)} {
+		drawSimBandText(c, r, "SIMULATION · NOT A REAL CABINET")
+	}
+	c.Text(rect(24, 70, 776, 180), title, Style{Font: FontBold, Size: 68, Color: colText, H: Center, MinSize: 40})
+	c.Wrap(rect(40, 190, 760, 320), line1, Style{Font: FontBold, Size: 34, Color: colText, H: Center, MinSize: 22}, 3)
+	c.Wrap(rect(40, 325, 760, 420), "No cabinet was being controlled by this simulation.", Style{Size: 30, Color: colText, H: Center, MinSize: 20}, 2)
+	return c.Img
+}
+
 // FrozenFrame replaces the screen when the render loop has stopped drawing.
-func FrozenFrame() *image.RGBA {
+func FrozenFrame() *image.RGBA { return FrozenFrameFor(false) }
+
+// FrozenFrameFor is FrozenFrame, marked as a simulation when sim is set.
+func FrozenFrameFor(sim bool) *image.RGBA {
+	if sim {
+		return simNoticeFrame("SIMULATION FROZEN", "The simulated readings were removed because they were no longer live.")
+	}
 	return noticeFrame("PANEL FROZEN", "The last readings were removed because they were no longer live.",
 		"Check the cabinet with a separate thermometer. Control may still be running. Restart the controller.")
 }
 
 // StoppedFrame replaces the screen when the panel stops, so an old frame does
 // not stay up looking like a live reading.
-func StoppedFrame() *image.RGBA {
+func StoppedFrame() *image.RGBA { return StoppedFrameFor(false) }
+
+// StoppedFrameFor is StoppedFrame, marked as a simulation when sim is set.
+func StoppedFrameFor(sim bool) *image.RGBA {
+	if sim {
+		return simNoticeFrame("SIMULATION STOPPED", "This screen is not showing live readings.")
+	}
 	return noticeFrame("PANEL STOPPED", "This screen is not showing live readings.",
 		"Check the cabinet with a separate thermometer. Restart the controller if it does not return within a minute.")
 }

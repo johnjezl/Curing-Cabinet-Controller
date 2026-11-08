@@ -183,13 +183,13 @@ func (fb *Framebuffer) PaintNotice(img *image.RGBA) error {
 
 // PaintStopped opens the framebuffer and paints the stopped notice. A service
 // manager can run it after the process has died, however it died.
-func PaintStopped(path string) error {
+func PaintStopped(path string, sim bool) error {
 	fb, err := OpenFramebuffer(path)
 	if err != nil {
 		return err
 	}
 	defer fb.Close()
-	return fb.PaintNotice(StoppedFrame())
+	return fb.PaintNotice(StoppedFrameFor(sim))
 }
 
 // Close unmaps the device.

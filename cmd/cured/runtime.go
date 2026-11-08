@@ -148,7 +148,7 @@ func (r *runtime) runUI(ctx context.Context, statePath string) {
 			bl := ui.OpenBacklight()
 			bl.Set(ui.PowerOn)
 			defer bl.Set(ui.PowerOn)
-			ui.RunLoop(ctx, r.uiCtl, ui.Config{StatePath: statePath}, fb, touch, ui.LoopOptions{Power: bl.Set, OnFrame: r.onFrame})
+			ui.RunLoop(ctx, r.uiCtl, ui.Config{StatePath: statePath, Simulated: !r.linesDriven}, fb, touch, ui.LoopOptions{Power: bl.Set, OnFrame: r.onFrame})
 		}()
 		sleepCtx(ctx, 5*time.Second)
 	}
@@ -279,8 +279,16 @@ func (r *runtime) statusMap() map[string]any {
 		"first_frame_uptime": float64(r.upFirstFrm.Load()) / 1000, "control_ticks": r.ticks.Load(),
 		"control_last_tick_age_s": time.Since(time.Unix(0, r.lastTick.Load())).Seconds(), "frames": r.frames.Load(),
 		"last_frame_age_s": time.Since(time.Unix(0, r.lastFrame.Load())).Seconds(),
-		"alarm_armed":      armed, "alarm_contact_closed": closed, "buzzer_on": buzz, "system_alarms": r.sys.Codes(),
-		"annunciator_lines_driven": r.linesDriven,
+		"alarm_armed": armed, "system_alarms": r.sys.Codes(), "annunciator_lines_driven": r.linesDriven,
+	}
+	if r.linesDriven {
+		m["alarm_contact_closed"], m["buzzer_on"] = closed, buzz
+	} else {
+		// No line follows the decision in a simulation: the guard holds both off, so
+		// the real contact is open and the real buzzer silent (ADR 0406). The
+		// simulated decision is reported under its own names.
+		m["alarm_contact_closed"], m["buzzer_on"] = false, false
+		m["simulated_contact_closed"], m["simulated_buzzer_on"] = closed, buzz
 	}
 	if r.statusX != nil {
 		m["sim"] = r.statusX()

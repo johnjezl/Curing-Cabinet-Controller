@@ -80,13 +80,20 @@ func computeStatus(s *api.Snapshot, stalled bool, stallFor time.Duration) Status
 		if a.Code == codeCureFinished {
 			st.Screen = scrCure // the screen that holds the verify text and the way to end
 		}
+		sim := ""
+		if s.Health.Simulated {
+			sim = "SIM " // the action text names real parts; this says none are involved
+		}
 		switch a.Severity {
 		case api.SevCritical:
-			st.Level, st.Headline = LevelCrit, "ALARM: "+st.Headline
+			st.Level, st.Headline = LevelCrit, sim+"ALARM: "+st.Headline
 		case api.SevWarning:
-			st.Level, st.Headline = LevelWarn, "WARNING: "+st.Headline
+			st.Level, st.Headline = LevelWarn, sim+"WARNING: "+st.Headline
 		default:
 			st.Level = LevelInfo
+			if sim != "" {
+				st.Headline = "SIM: " + st.Headline
+			}
 		}
 		return st
 	}

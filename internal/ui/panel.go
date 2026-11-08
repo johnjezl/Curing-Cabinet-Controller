@@ -65,6 +65,9 @@ type Config struct {
 	SettingsErr string
 	Persist     func(Settings)
 	Location    *time.Location // default time.Local
+	// Simulated marks the notices painted outside the render loop (frozen, stopped),
+	// which have no snapshot to read it from.
+	Simulated bool
 }
 
 func (c *Config) defaults() {

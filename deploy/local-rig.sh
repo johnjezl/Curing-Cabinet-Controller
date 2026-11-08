@@ -56,7 +56,8 @@ make_tree() {
 # also works inside a systemd property.
 sandbox() {
   local uid; uid=$(id -u)
-  echo /usr/bin/bwrap --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp \
+  # The private /tmp would hide a bench directory under /tmp, so $L is bound back.
+  echo /usr/bin/bwrap --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --bind "$L" "$L" \
     --tmpfs /run --bind "/run/user/$uid" "/run/user/$uid" \
     --bind "$L/run" /run/curing-cured --bind "$L/hwrun" /run/curing --bind "$L/guard" /run/curing-outputs \
     --ro-bind "$L/sync" /run/systemd/timesync \

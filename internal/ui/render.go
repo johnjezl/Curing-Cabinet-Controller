@@ -228,15 +228,20 @@ func (p *Panel) drawHeaderIn(c *Canvas, st Status, title string, r image.Rectang
 // drawHeaderRight draws clock, lock and simulation marker; returns the left edge.
 func (p *Panel) drawHeaderRight(c *Canvas, r image.Rectangle, bg, fg color.RGBA, compact bool) int {
 	x := r.Max.X - 8
+	if p.snap.Health.Simulated {
+		// The clock goes inside the simulation pill: it is simulated time.
+		x = p.drawSimPill(c, x, r, compact)
+		if p.locked {
+			x = p.drawLockPill(c, x, r)
+		}
+		return x
+	}
 	clock := p.clockText()
 	w := getFace(FontBold, 22).measure(clock) + 2
 	c.Text(rect(x-w, r.Min.Y, x, r.Max.Y), clock, Style{Font: FontBold, Size: 22, Color: fg, H: Right})
 	x -= w + 8
 	if p.locked {
 		x = p.drawLockPill(c, x, r)
-	}
-	if p.snap.Health.Simulated {
-		x = p.drawSimPill(c, x, r, compact)
 	}
 	return x
 }
@@ -268,6 +273,7 @@ func (p *Panel) drawSimPill(c *Canvas, x int, r image.Rectangle, compact bool) i
 	if f := p.snap.Health.SpeedFactor; finite(f) && f > 1 {
 		label += fmt.Sprintf(" ×%.0f", f)
 	}
+	label += " " + p.clockText()
 	w := getFace(FontBold, 22).measure(label) + 18
 	box := rect(x-w, r.Min.Y+4, x, r.Max.Y-4)
 	c.Round(box, 4, colSim)
@@ -276,21 +282,26 @@ func (p *Panel) drawSimPill(c *Canvas, x int, r image.Rectangle, compact bool) i
 }
 
 // simBandH is the height the home screen gives the simulation band, gap included.
-const simBandH = 24
+// The lettering must be legible at 2 m: 32 px type has capitals of about 23 px
+// (3.1 mm, over 5 arcmin at 2 m on this panel).
+const simBandH = 44
 
 // drawSimBand is the full-width simulation marker at the top of the home screen.
 // The hatched ends match the frame; the words say what is and is not real.
 func (p *Panel) drawSimBand(c *Canvas, r image.Rectangle) {
-	c.Fill(r, colSim)
 	label := "SIMULATION"
 	if f := p.snap.Health.SpeedFactor; finite(f) && f > 1 {
 		label += fmt.Sprintf(" ×%.0f", f)
 	}
-	label += " · NOT A REAL CABINET · SIMULATED CLOCK"
-	st := Style{Font: FontBold, Size: 19, Color: colText, H: Center, MinSize: 13}
-	w := getFace(FontBold, 19).measure(label) + 24
-	if w > r.Dx()-40 {
-		w = r.Dx() - 40
+	drawSimBandText(c, r, label+" · NOT A REAL CABINET")
+}
+
+func drawSimBandText(c *Canvas, r image.Rectangle, label string) {
+	c.Fill(r, colSim)
+	st := Style{Font: FontBold, Size: 32, Color: colText, H: Center, MinSize: 22}
+	w := getFace(FontBold, 32).measure(label) + 24
+	if w > r.Dx()-24 {
+		w = r.Dx() - 24
 	}
 	mid := (r.Min.X + r.Max.X) / 2
 	c.Hatch(rect(r.Min.X, r.Min.Y, mid-w/2, r.Max.Y), 18, 9, colSimLite)

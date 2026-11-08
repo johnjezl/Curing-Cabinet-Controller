@@ -17,8 +17,8 @@ func (p *Panel) drawHome(c *Canvas, st Status) {
 	holds := len(s.Outputs.Holds) > 0 || note != "" || p.whyIdle() != ""
 	var aTop, aBot, bTop, bBot, cTop, cBot, digit, medDigit int
 	// In simulation the across-the-room view starts with a full-width band (ADR 0406).
-	// The space comes out of the air and weight row, so the temperature and humidity
-	// digits keep their height, except with a banner and a hold both showing.
+	// The space comes out of the air and weight row, and with a banner showing out of
+	// the reading tiles too: a simulation is meant not to read like a real cabinet.
 	off := 0
 	if s.Health.Simulated {
 		off = simBandH
@@ -27,10 +27,10 @@ func (p *Panel) drawHome(c *Canvas, st Status) {
 	switch {
 	case big && off > 0:
 		p.drawBigBanner(c, st, off, 98)
-		aTop, aBot, digit = 132, 279, 104
+		aTop, aBot, digit = 152, 279, 80
 		bTop, bBot, cTop, cBot, medDigit = 282, 347, 350, 382, 30
 		if holds {
-			aBot, digit = 262, 84
+			aBot, digit = 262, 62
 			bTop, bBot, cTop, medDigit = 265, 318, 321, 20
 		}
 	case big:
@@ -42,8 +42,8 @@ func (p *Panel) drawHome(c *Canvas, st Status) {
 		}
 	case off > 0:
 		p.drawHeaderIn(c, st, "", rect(mX, headTop+off, mR, headBot+off))
-		aTop, aBot, digit = 84, 231, 104
-		bTop, bBot, cTop, cBot, medDigit = 235, 315, 319, 382, 38
+		aTop, aBot, digit = 104, 251, 104
+		bTop, bBot, cTop, cBot, medDigit = 255, 315, 319, 382, 30
 	default:
 		p.drawHeader(c, st, "")
 		aTop, aBot, digit = 60, 222, 118
@@ -162,9 +162,11 @@ func (p *Panel) drawBigBanner(c *Canvas, st Status, off, height int) {
 func (p *Panel) drawBannerTags(c *Canvas, r image.Rectangle, fg color.RGBA) int {
 	x := r.Max.X
 	clock := p.clockText()
-	w := getFace(FontBold, 18).measure(clock) + 2
-	c.Text(rect(x-w, r.Min.Y, x, r.Max.Y), clock, Style{Font: FontBold, Size: 18, Color: fg, H: Right})
-	x -= w + 4
+	if !p.snap.Health.Simulated {
+		w := getFace(FontBold, 18).measure(clock) + 2
+		c.Text(rect(x-w, r.Min.Y, x, r.Max.Y), clock, Style{Font: FontBold, Size: 18, Color: fg, H: Right})
+		x -= w + 4
+	}
 	tag := func(label string, bg color.RGBA) {
 		tw := getFace(FontBold, 15).measure(label) + 10
 		b := rect(x-tw, r.Min.Y, x, r.Max.Y)
@@ -172,11 +174,11 @@ func (p *Panel) drawBannerTags(c *Canvas, r image.Rectangle, fg color.RGBA) int 
 		c.Text(b, label, Style{Font: FontBold, Size: 15, Color: colText, H: Center})
 		x -= tw + 4
 	}
+	if p.snap.Health.Simulated {
+		tag("SIM "+clock, colSim) // simulated time, where the clock would be
+	}
 	if p.locked {
 		tag("LOCKED", colBG)
-	}
-	if p.snap.Health.Simulated {
-		tag("SIM", colSim)
 	}
 	return x
 }
@@ -291,7 +293,11 @@ func (p *Panel) badReading(c *Canvas, tile, v image.Rectangle, rd api.Reading, d
 	if large {
 		wr := rect(v.Min.X+30, v.Min.Y+8, v.Max.X-30, v.Min.Y+v.Dy()*6/10)
 		c.Round(wr, 6, plate)
-		c.Text(wr, word, Style{Font: FontBold, Size: 54, Color: wordCol, H: Center, MinSize: 28})
+		size := 54
+		if fit := wr.Dy() * 100 / 82; fit < size { // capitals are about 0.76 of the type size
+			size = fit
+		}
+		c.Text(wr, word, Style{Font: FontBold, Size: size, Color: wordCol, H: Center, MinSize: 20})
 		sr := rect(v.Min.X+8, wr.Max.Y+4, v.Max.X-8, v.Max.Y-2)
 		c.Round(sr, 4, colBG)
 		c.Wrap(sr.Inset(2), sub, Style{Font: FontBold, Size: 24, Color: colText, H: Center, MinSize: 14}, 2)

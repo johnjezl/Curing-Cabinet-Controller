@@ -144,8 +144,13 @@ func TestTouchTargets(t *testing.T) {
 }
 
 // Reference: temperature digits of 14 to 30 mm; 14 mm is 104 px on this panel.
+// A simulation is exempt: its band takes the room, and it is meant not to read
+// like a real cabinet from across the room (ADR 0406).
 func TestDigitHeightOnHome(t *testing.T) {
 	for _, f := range fixtures.All() {
+		if f.Make().Health.Simulated {
+			continue
+		}
 		h := uitest.ForFixture(f, ui.Config{})
 		a := auditHome(h)
 		for _, k := range []string{"home.temp", "home.rh"} {
