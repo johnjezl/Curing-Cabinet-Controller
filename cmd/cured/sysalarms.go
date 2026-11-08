@@ -29,6 +29,8 @@ const (
 	sysIDPrefix   = "sys-"
 	sysSilenceFor = time.Hour
 	sysKeepHist   = 20
+	// sysEventCall is how long a past event calls, as core's events do (ADR 0108).
+	sysEventCall = 30 * time.Minute
 )
 
 // sysAlarms is the table of those conditions.
@@ -42,10 +44,46 @@ type sysAlarms struct {
 	silenceAt time.Time
 	silenced  bool
 	logf      func(string, ...any)
+	// event marks codes that report something that happened, not a standing fault.
+	// They call for sysEventCall or until acknowledged, and an acknowledgement clears
+	// them, so an old one never holds the contact for the rest of a cure (ADR 0408).
+	event map[string]bool
 }
 
 func newSysAlarms(now func() time.Time, wallOK func() bool, logf func(string, ...any)) *sysAlarms {
-	return &sysAlarms{now: now, wallOK: wallOK, active: map[string]*api.Alarm{}, logf: logf}
+	return &sysAlarms{now: now, wallOK: wallOK, active: map[string]*api.Alarm{}, logf: logf, event: map[string]bool{}}
+}
+
+// RaiseEvent is Raise for something that happened, such as a burst of restarts.
+func (s *sysAlarms) RaiseEvent(code string, sev api.Severity, title, action string) {
+	s.mu.Lock()
+	s.event[code] = true
+	s.mu.Unlock()
+	s.Raise(code, sev, title, action)
+}
+
+// calls says whether one alarm calls the contact now. Caller holds mu.
+func (s *sysAlarms) calls(a *api.Alarm) bool {
+	if a.Severity != api.SevCritical {
+		return false
+	}
+	if s.event[a.Code] {
+		return !a.Acked && s.now().Sub(a.Since) < sysEventCall
+	}
+	return true
+}
+
+// CallingCodes lists the codes calling the contact now.
+func (s *sysAlarms) CallingCodes() map[string]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]bool{}
+	for code, a := range s.active {
+		if s.calls(a) {
+			out[code] = true
+		}
+	}
+	return out
 }
 
 // Raise makes the condition active. Repeating it only refreshes the text.
@@ -72,6 +110,7 @@ func (s *sysAlarms) Clear(code string) {
 		return
 	}
 	delete(s.active, code)
+	delete(s.event, code)
 	c := *a
 	c.Cleared = s.now()
 	s.hist = append([]api.Alarm{c}, s.hist...)
@@ -88,7 +127,7 @@ func (s *sysAlarms) Calling() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, a := range s.active {
-		if a.Severity == api.SevCritical {
+		if s.calls(a) {
 			return true
 		}
 	}
@@ -106,7 +145,7 @@ func (s *sysAlarms) Sounding() bool {
 		return false
 	}
 	for _, a := range s.active {
-		if !a.Acked && a.Severity == api.SevCritical {
+		if !a.Acked && s.calls(a) {
 			return true
 		}
 	}
@@ -132,12 +171,21 @@ func (s *sysAlarms) Ack(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	found := false
-	for _, a := range s.active {
+	var done []string
+	for code, a := range s.active {
 		if id == "" || a.ID == id {
 			a.Acked = true
 			found = true
+			if s.event[code] {
+				done = append(done, code)
+			}
 		}
 	}
+	s.mu.Unlock()
+	for _, code := range done {
+		s.Clear(code) // an acknowledged event has been seen; it moves to history
+	}
+	s.mu.Lock()
 	return found
 }
 

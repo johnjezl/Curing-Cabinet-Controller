@@ -158,6 +158,7 @@ const (
 	CodeHeatStuck    = "HEAT_STUCK_ON"
 	CodeHumidFail    = "HUMID_NO_EFFECT"
 	CodeHumidStuck   = "RH_NOT_FALLING"
+	CodeHumidOnStuck = "HUMID_STUCK_ON"
 	CodeOutputFault  = "OUTPUT_FAULT"
 	CodeStorage      = "STORAGE_FAULT"
 	CodeStateLost    = "STATE_RESET"

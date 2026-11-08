@@ -97,10 +97,11 @@ type Core struct {
 	coolOffT0, coolOffStart            float64
 	coolStuck                          bool
 	coolStuckMin, lastDoorT            float64
-	heatClimbT                         float64
 	runActive, runClean                bool
 	runT0, runMin, runEnd              float64
 	runContT, runContT0, lastRunDrop   float64
+	runDew0, runDewMin, runContDew0    float64 // dew point at run start, lowest in the run, at the 15 min mark
+	lastRunDewDrop                     float64
 	badRuns                            int
 	aboveBandT, lastTBadT, rhHighSince float64
 	signalling                         bool
@@ -111,8 +112,15 @@ type Core struct {
 	dropped                            bool
 	outErrSince                        float64
 	driftClearT, rhDriftClearT         float64
-	lastHeatOn                         float64
-	heatStuck                          bool
+	lastHeatOn, lastHumOn              float64
+	heatStuck, humOnStuck              bool
+	compRecent                         ema // compressor on-time over the last half hour or so
+	humSat                             ema // share of the last 20 min or so at saturation with the humidifier off
+	tRing                              [7]float64
+	tRingT                             float64
+	stuckClearT, humStuckClearT        float64
+	humSatSince, coolOffDew0           float64
+	lastEquipFaultT                    float64
 	heatEffort, heatEvalT, heatEvalT0  float64
 	heatFailing                        bool
 
@@ -204,6 +212,8 @@ func New(o Options) (*Core, error) {
 	c.ctl.dutyShort.tau, c.ctl.humidShort.tau = 12*3600, 12*3600
 	c.ctl.dutyBase.tau, c.ctl.humidBase.tau = 21*24*3600, 21*24*3600
 	c.ctl.dutyFast.tau = 3600
+	c.compRecent.tau = 1800
+	c.humSat.tau = 1200
 	c.ctl.dehumEffort.tau, c.ctl.dehumBase.tau = 12*3600, 21*24*3600
 	c.acc.reset()
 
@@ -1196,6 +1206,16 @@ func (c *Core) refDue() float64 {
 	return c.cfg.CalReminderIdleSec
 }
 
+// EdgeCount is how many brief closes of the contact core has started, one for each
+// alarm raised or escalated while the contact was already signalling. cured turns
+// each new one into its own brief close, so a new alarm is a fresh transition even
+// while one of its own system alarms holds the contact (ADR 0408).
+func (c *Core) EdgeCount() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.al.edges
+}
+
 // outputStatus explains the regulated outputs. It is computed on demand only.
 func (c *Core) outputStatus() []api.OutputStatus {
 	ctl := &c.ctl
@@ -1285,7 +1305,10 @@ func (c *Core) outputStatus() []api.OutputStatus {
 		cool = st(co, true, "stuck", "relay appears stuck closed: the air falls with the compressor commanded off")
 	}
 	if c.al.active[CodeHeatStuck] != nil {
-		heat = st(he, true, "stuck", "relay appears stuck closed: the cabinet takes far more cooling with the heater commanded off")
+		heat = st(he, true, "stuck", "appears stuck on: the compressor runs nearly all the time with the heater off and the air does not come down")
+	}
+	if c.al.active[CodeHumidOnStuck] != nil {
+		hum = st(hu, true, "stuck", "appears stuck on: humidity is near saturation with the humidifier off")
 	}
 	// A failed write leaves every relay where it was, or wherever the guard put it:
 	// nothing here can say which (ADR 0407).

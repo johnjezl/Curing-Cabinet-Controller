@@ -230,7 +230,9 @@ func (r *runtime) noteStart() {
 	}
 	logfJ("<5>cured: starts within %.0f s: %d", restartWindow, len(keep))
 	if len(keep) >= restartThreshold {
-		r.sys.Raise(CodeRestartLoop, api.SevCritical, "Controller keeps restarting",
+		// A burst of restarts is something that happened: it calls for 30 minutes or
+		// until acknowledged, and never holds the contact for the rest of a cure.
+		r.sys.RaiseEvent(CodeRestartLoop, api.SevCritical, "Controller keeps restarting",
 			fmt.Sprintf("The control service has started %d times in 10 minutes. Outputs drop on every restart. Check the journal.", len(keep)))
 	}
 }
@@ -281,9 +283,15 @@ func (r *runtime) statusMap() map[string]any {
 		"last_frame_age_s": time.Since(time.Unix(0, r.lastFrame.Load())).Seconds(),
 		"system_alarms": r.sys.Codes(), "annunciator_lines_driven": r.linesDriven,
 	}
+	var openings uint64
+	if r.ann != nil {
+		openings = r.ann.Openings()
+	}
 	if r.linesDriven {
 		m["alarm_armed"], m["alarm_contact_closed"], m["buzzer_on"] = armed, closed, buzz
+		m["contact_openings"] = openings
 	} else {
+		m["simulated_contact_openings"] = openings
 		m["alarm_armed"], m["simulated_alarm_armed"] = false, armed
 		// No line follows the decision in a simulation: the guard holds every line off,
 		// so the real contact is open and a wired sounder sounds, both energize-to-run
@@ -410,6 +418,7 @@ func runReal(ctx context.Context) error {
 	}
 	r.c, r.v = c, &view{c: c, sys: r.sys}
 	r.uiCtl = r.v
+	r.ann.coreEdges = c.EdgeCount
 
 	uiCtx, uiStop := context.WithCancel(context.Background())
 	uiDone := make(chan struct{})

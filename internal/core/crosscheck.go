@@ -161,6 +161,13 @@ func (c *Core) crossEval() {
 		c.crossTempSoft, c.crossRHSoft, c.crossRateSoft = false, false, false
 		return
 	}
+	// A part already known to misbehave explains any change in effort: a humidifier
+	// stuck on brings reheat, a compressor that does not cool brings heat, and the
+	// sensor is not to blame for either (integration defect 1).
+	if c.equipmentFault() {
+		c.crossTempSoft, c.crossRHSoft, c.crossRateSoft = false, false, false
+		return
+	}
 	// Base: up to 72 h ending a day ago. Now: the last 24 h, and a fast look at the last 6 h
 	// against everything before them.
 	baseEnd := n - 24
@@ -269,6 +276,18 @@ func (c *Core) crossEval() {
 	c.crossTempSoft = math.Abs(dN) >= 0.10 || math.Abs(fzN) >= 0.07
 	c.crossRHSoft = dD >= 0.06 || dH >= 0.03 || fzD >= 0.07 || fzH >= 0.03
 	c.crossRateSoft = haveR && (r >= 1.4 || r <= 0.6)
+}
+
+// equipmentFault says whether a part is known to be misbehaving, or was in the last
+// six hours.
+func (c *Core) equipmentFault() bool {
+	for _, code := range []string{CodeHeatStuck, CodeHumidOnStuck, CodeCoolFail, CodeCoolStuck, CodeHeatFail, CodeHumidFail, CodeOutputFault, CodeFanStall} {
+		if c.al.active[code] != nil {
+			c.lastEquipFaultT = c.t
+			return true
+		}
+	}
+	return c.lastEquipFaultT != 0 && c.t-c.lastEquipFaultT < 6*3600
 }
 
 func maxInt(a, b int) int {

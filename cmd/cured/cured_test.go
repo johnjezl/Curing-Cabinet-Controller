@@ -128,6 +128,7 @@ func TestContactEnergizedOnlyWhenHealthyAndArmed(t *testing.T) {
 		t.Fatal("core calling must open the contact")
 	}
 	_ = f.Set(hal.OutAlarm, true)
+	a.Tick(*clock, "") // healthy again first, so the system alarm is a plain opening
 	sys.Raise(CodeDisplayMissing, api.SevCritical, "t", "a")
 	a.Tick(*clock, "")
 	if l.alarm || l.buzzer { // both energize-to-run: low is open and sounding
@@ -284,5 +285,68 @@ func TestSystemWarningIsARecordOnly(t *testing.T) {
 	}
 	if len(sys.Active()) != 1 {
 		t.Fatal("the warning must stay on record")
+	}
+}
+
+// Integration defect 3: a latched system alarm held the contact open for the rest of a
+// cure, so later alarms made no transition. Every new alarm is now a brief close and a
+// fresh opening, whoever holds the contact (ADR 0408).
+func TestNewAlarmIsAFreshOpeningWhileContactHeld(t *testing.T) {
+	a, f, l, sys, clock := testAnn()
+	var edges uint64
+	a.coreEdges = func() uint64 { return edges }
+	_ = f.Set(hal.OutAlarm, true)
+	*clock = clock.Add(armDelay)
+	a.Tick(*clock, api.QualityOK)
+	if !l.alarm {
+		t.Fatal("not armed")
+	}
+	sys.Raise(CodeDisplayMissing, api.SevCritical, "t", "a")
+	a.Tick(*clock, "")
+	if l.alarm || a.Openings() != 1 {
+		t.Fatalf("system alarm must open the contact: %+v openings %d", l, a.Openings())
+	}
+	// core raises a new alarm while the system alarm holds the contact open.
+	edges++
+	*clock = clock.Add(time.Second)
+	a.Tick(*clock, "")
+	if !l.alarm {
+		t.Fatal("a new core alarm must close the contact briefly")
+	}
+	*clock = clock.Add(edgeFor)
+	a.Tick(*clock, "")
+	if l.alarm || a.Openings() != 2 {
+		t.Fatalf("and open it again: %+v openings %d", l, a.Openings())
+	}
+	// A second system alarm while the contact is open does the same.
+	sys.Raise(CodeSafeState, api.SevCritical, "t", "a")
+	a.Tick(*clock, "")
+	if !l.alarm {
+		t.Fatal("a new system alarm must close the contact briefly")
+	}
+	*clock = clock.Add(edgeFor)
+	a.Tick(*clock, "")
+	if l.alarm || a.Openings() != 3 {
+		t.Fatalf("and open it again: %+v openings %d", l, a.Openings())
+	}
+}
+
+func TestRestartLoopIsAnEventNotALatch(t *testing.T) {
+	now := time.Unix(1000, 0)
+	s := newSysAlarms(func() time.Time { return now }, func() bool { return true }, func(string, ...any) {})
+	s.RaiseEvent(CodeRestartLoop, api.SevCritical, "t", "a")
+	if !s.Calling() || !s.Sounding() {
+		t.Fatal("a fresh restart burst must call")
+	}
+	now = now.Add(sysEventCall)
+	if s.Calling() || s.Sounding() {
+		t.Fatal("an old restart burst must not hold the contact")
+	}
+	if len(s.Active()) != 1 {
+		t.Fatal("it stays listed until acknowledged")
+	}
+	s.Ack("")
+	if len(s.Active()) != 0 || len(s.History()) != 1 {
+		t.Fatal("acknowledged, it moves to history")
 	}
 }

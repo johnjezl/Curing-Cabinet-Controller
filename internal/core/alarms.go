@@ -47,7 +47,8 @@ var alarmDefs = map[string]alarmDef{
 	CodeCoolFail:     {api.SevCritical, "Compressor called for but the cabinet is not cooling", "Check the compressor and its relay, and for ice on the coil. A heater stuck on looks the same.", "°C"},
 	CodeCoolStuck:    {api.SevCritical, "Cabinet is cooling with the compressor off", "The compressor relay may be stuck closed. Disconnect it if the temperature keeps falling.", "°C"},
 	CodeHeatFail:     {api.SevWarning, "Heater on but cabinet is not warming", "Check the heater and its relay.", "°C"},
-	CodeHeatStuck:    {api.SevCritical, "Cabinet is warming with the heater off", "The heater relay may be stuck closed. Disconnect it.", "°C"},
+	CodeHeatStuck:    {api.SevCritical, "Heater appears stuck on", "The cabinet needs far more cooling than usual with the heater off. Feel the heater: if it is warm, disconnect it. If it is cold, the room has become much warmer.", "°C"},
+	CodeHumidOnStuck: {api.SevCritical, "Humidifier appears stuck on", "Humidity is near saturation with the humidifier off while the cabinet is drying the air. Check whether the humidifier is running: if it is, disconnect it. If not, look for standing water.", "%RH"},
 	CodeHumidFail:    {api.SevWarning, "Humidifier on but humidity is not rising", "Refill the humidifier. Check the relay.", "%RH"},
 	CodeHumidStuck:   {api.SevWarning, "Humidity cannot be brought down to setpoint", "Check for a humidifier relay stuck closed, or a very wet load. Check the drain. If the setpoint is beyond this cabinet, change it.", "%RH"},
 	CodeOutputFault:  {api.SevCritical, "Output could not be switched", "Check the relay board and its connection.", ""},
@@ -59,7 +60,7 @@ var alarmDefs = map[string]alarmDef{
 	CodeLogDamage:    {api.SevInfo, "Damaged log lines were skipped", "Expected once after a power cut. If it repeats, check the storage card.", ""},
 	CodeDoorSwitch:   {api.SevWarning, "Door switch not responding", "Door alarms are unavailable. Check the switch.", ""},
 	CodeTempHighCrit: {api.SevCritical, "Temperature far above setpoint", "Find the cause now. Inspect product and judge it by your own process plan.", "°C"},
-	CodeTempDisagree: {api.SevCritical, "Temperature reading disagrees with how the cabinet is behaving", "Check with a separate thermometer and enter the result. Product may be warmer or colder than shown. Heating and humidifying are held off. Clears after a passed check or 48 h.", "°C"},
+	CodeTempDisagree: {api.SevCritical, "Cabinet effort changed with no change in the reading", "The reading may have drifted, or the room changed sharply. Check with a thermometer and enter it. Heat and humidity held off; clears after a check or 48 h.", "°C"},
 	CodeRHDisagree:   {api.SevCritical, "Humidity reading disagrees with how the cabinet is behaving", "Check with a separate hygrometer and enter the result. Heating and humidifying are held off. Clears after a passed check or 48 h.", "%RH"},
 	CodeDryingShift:  {api.SevWarning, "Drying rate changed with no change of setpoint", "Check temperature and humidity against separate instruments, and check nothing touches the scale.", ""},
 	CodeRefDisagree:  {api.SevCritical, "Sensor differs from the reference instrument", "Replace or calibrate the sensor, then check again.", ""},
@@ -92,6 +93,7 @@ type alarms struct {
 	silenced  bool
 	silenceT  float64
 	edgeUntil float64
+	edges     uint64 // brief closes started for a new alarm, for the annunciator
 }
 
 func newAlarms() alarms {
@@ -357,12 +359,23 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	// Does a compressor run pull the air down? Healthy runs drop the air by much
 	// more than the threshold within two minutes of stopping, even on weak plants.
 	// A heater running in the same window hides this, so such runs do not count.
+	// The dew point is the second witness: a cold coil condenses water and pulls it
+	// down, while heat alone leaves it where it is. So a run that lowers the dew point
+	// proves the compressor works even when a heater stuck on outruns it.
+	dew := math.NaN()
+	if c.chRH.ok() && tOK {
+		dew = dewPoint(c.tF.v, c.rhF.v)
+	}
 	if ctl.comp.on && !c.runActive {
 		c.runActive, c.runT0, c.runMin, c.runClean, c.runContT, c.runContT0 = true, c.tF.v, c.tF.v, true, t, c.tF.v
+		c.runDew0, c.runDewMin, c.runContDew0 = dew, dew, dew
 	}
 	if c.runActive {
 		if c.tF.v < c.runMin {
 			c.runMin = c.tF.v
+		}
+		if dew < c.runDewMin || (math.IsNaN(c.runDewMin) && !math.IsNaN(dew)) {
+			c.runDewMin = dew
 		}
 		if !tOK || !quiet || ctl.heatOn || ctl.stall {
 			c.runClean = false
@@ -372,14 +385,23 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 			// A long run with no fall counts as failure on its own, heater or not:
 			// a heater that wins against the compressor is also not cooling.
 			if tOK && quiet && t-c.runContT >= 900 {
-				if c.tF.v > c.runContT0-0.2 && c.tF.v > set.TempC+0.3 {
+				condensing := !math.IsNaN(dew) && !math.IsNaN(c.runContDew0) && dew <= c.runContDew0-0.5
+				// A heater already shown stuck on explains a compressor that cannot win.
+				if c.tF.v > c.runContT0-0.2 && c.tF.v > set.TempC+0.3 && !condensing && !c.heatStuck {
 					c.coolFailing = true
 				}
-				c.runContT, c.runContT0 = t, c.tF.v
+				c.runContT, c.runContT0, c.runContDew0 = t, c.tF.v, dew
 			}
 		} else if t-c.runEnd >= 120 {
 			c.runActive = false
 			drop := c.runT0 - c.runMin
+			c.lastRunDewDrop = 0
+			if !math.IsNaN(c.runDew0) && !math.IsNaN(c.runDewMin) {
+				c.lastRunDewDrop = c.runDew0 - c.runDewMin
+			}
+			if c.lastRunDewDrop >= 0.5 {
+				drop = math.Max(drop, 0.5) // the coil works, whatever the air did
+			}
 			if c.runClean {
 				c.lastRunDrop = drop
 				if drop < 0.2 && c.runT0 > set.TempC-0.5 {
@@ -413,13 +435,18 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 		if off >= 300 && c.coolOffT0 == 0 {
 			c.coolOffT0 = ts
 			c.coolOffStart = t
+			c.coolOffDew0 = dew
 		}
 		if c.coolOffT0 != 0 {
 			if ts > c.coolOffT0 {
 				c.coolOffT0 = ts
 				c.coolOffStart = t
+				c.coolOffDew0 = dew
 			}
-			if c.coolOffT0-ts >= 1.0 && t-c.coolOffStart < 1500 {
+			// A closed compressor relay condenses water and pulls the dew point down; mist
+			// from a humidifier stuck on also cools the air, but pushes the dew point up.
+			humidifying := !math.IsNaN(dew) && !math.IsNaN(c.coolOffDew0) && dew > c.coolOffDew0+0.3
+			if c.coolOffT0-ts >= 1.0 && t-c.coolOffStart < 1500 && !humidifying {
 				if !c.coolStuck {
 					c.coolStuckMin = ts
 				}
@@ -445,7 +472,8 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	// a falling reading is not the only sign: the heater has suddenly become busy
 	// while the compressor is commanded off. Only in a cabinet that normally needs
 	// cooling: in a heating regime a busy heater is ordinary.
-	if tOK && quiet && !ctl.comp.on && ctl.driftAge >= 6*3600 && c.st.CoolDuty > 0.03 && ctl.dutyFast.v < c.st.CoolDuty-0.2 && ctl.dutyFast.v < -0.1 {
+	if tOK && quiet && !ctl.comp.on && ctl.driftAge >= 6*3600 && c.st.CoolDuty > 0.03 && ctl.dutyFast.v < c.st.CoolDuty-0.2 && ctl.dutyFast.v < -0.1 &&
+		!c.humOnStuck && c.humSatSince == 0 { // reheat against a humidifier's mist is not this
 		c.coolStuck = true
 		c.coolStuckMin = ts
 	} else if c.coolStuck && ctl.dutyFast.v > -0.05 && ts > set.TempC-1 {
@@ -453,26 +481,100 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	}
 	c.timed(CodeCoolStuck, c.coolStuck, !c.coolStuck, 0, ts, set.TempC)
 
-	// Heater commanded off, yet the cabinet suddenly takes far more cooling than
-	// it has been taking. A rise in temperature alone cannot show this, because a
-	// small cabinet in a warm room rises as fast as a large one with a heater on.
+	// A heater stuck closed adds its full power to the cabinet. The compressor then runs
+	// nearly all the time and the air still does not come down. Recovering from a warm
+	// excursion (a repaired compressor, outputs back after a fault, a warm load) also
+	// runs the compressor hard, but the air comes down; a compressor that does not cool
+	// is COOL_NO_EFFECT, not this. Only with the heater commanded off for half an hour.
+	// It latches until the cabinet is back to normal for half an hour, so it cannot flap.
 	if ctl.heatOn {
 		c.lastHeatOn = t
 	}
-	noDoor := c.lastDoorT == 0 || t-c.lastDoorT > 6*3600
-	// Only when compressor runs are visibly working: otherwise the compressor, not
-	// the heater, is the thing to suspect.
-	climbing := tOK && quiet && noDoor && t-c.lastHeatOn >= 1800 && ctl.driftAge >= 6*3600 && ctl.dutyFast.v > c.st.CoolDuty+0.25 && c.lastRunDrop >= 0.5 && !c.coolFailing
-	if climbing {
-		c.heatStuck = true
-		c.heatClimbT = t
-	} else if c.heatStuck && t-c.heatClimbT > 1200 {
-		c.heatStuck = false
+	if ctl.humOn {
+		c.lastHumOn = t
+	}
+	on := 0.0
+	if ctl.comp.on {
+		on = 1
+	}
+	c.compRecent.add(on, dt)
+	if t >= c.tRingT {
+		c.tRingT = t + 300
+		copy(c.tRing[1:], c.tRing[:len(c.tRing)-1])
+		c.tRing[0] = ts
+	}
+	t30 := c.tRing[len(c.tRing)-1] // the reading about 30 min ago
+	noDoor := c.lastDoorT == 0 || t-c.lastDoorT > 3600
+	coilWorks := c.lastRunDrop >= 0.3 || c.lastRunDewDrop >= 0.5
+	held := true // in band for the last half hour, so not recovering from an excursion
+	for _, v := range c.tRing {
+		held = held && math.Abs(v-set.TempC) < 1
+	}
+	base := tOK && quiet && t-c.lastHeatOn >= 1800 && t-c.bootT >= 2400 && coilWorks && !c.coolFailing
+	// Either the compressor cannot hold the air down, or it holds it only by running far
+	// more than this cabinet's own history at this setpoint (24 h, ADR 0111's figure):
+	// 100 W of heater is most of a small compressor, a room change is a fraction of it.
+	// Flat or rising: a cabinet recovering from an excursion comes down, however slowly.
+	losing := noDoor && c.compRecent.v >= 0.6 && ts >= set.TempC+1 && ts-t30 > -0.05
+	working := (c.lastDoorT == 0 || t-c.lastDoorT > 6*3600) && held && c.st.CoolDutyAge >= 6*3600 && c.compRecent.v-c.st.CoolDuty >= 0.45
+	heatEvidence := base && (losing || working)
+	switch {
+	case heatEvidence:
+		c.heatStuck, c.stuckClearT = true, 0
+	case c.heatStuck && tOK && ts < set.TempC+0.5 && c.compRecent.v < 0.5:
+		if c.stuckClearT == 0 {
+			c.stuckClearT = t
+		}
+		if t-c.stuckClearT >= 1800 {
+			c.heatStuck = false
+		}
+	default:
+		c.stuckClearT = 0
 	}
 	c.timed(CodeHeatStuck, c.heatStuck, !c.heatStuck, 0, ts, set.TempC)
 
-	// Heater working hard with no result.
-	if tOK && quiet && ts < set.TempC-0.7 && !ctl.comp.on {
+	// A humidifier stuck closed drives the air to saturation and holds it there. With the
+	// humidifier commanded off for half an hour and the cabinet dehumidifying as it does,
+	// a wet load does not keep the air at saturation for most of 20 minutes (each
+	// compressor run dips it briefly, so this is an average, not an unbroken spell). It
+	// latches until humidity has stayed normal for 2 h, because the coil pulls it down
+	// between peaks.
+	rhOK := c.chRH.ok()
+	sat := math.Max(97, set.RHPct+5)
+	if !ctl.defrost {
+		at := 0.0
+		if rhOK && c.rhS.v >= sat && t-c.lastHumOn >= 1800 && noDoor {
+			at = 1
+		}
+		c.humSat.add(at, dt)
+	}
+	c.humSatSince = 0
+	if c.humSat.v >= 0.6 {
+		c.humSatSince = t // read by COOL_STUCK_ON: reheat against mist is not a stuck compressor
+	}
+	// A compressor that does not cool also lets the air reach saturation, but warm: that
+	// is COOL_NO_EFFECT. So the coil must be shown working, or the air held at setpoint
+	// (mist cools it; a dead compressor lets it rise).
+	humEvidence := tOK && rhOK && t-c.bootT >= 2400 && c.humSat.v >= 0.6 &&
+		(coilWorks || ts <= set.TempC+0.5) && !c.coolFailing
+	switch {
+	case humEvidence:
+		c.humOnStuck, c.humStuckClearT = true, 0
+	case c.humOnStuck && rhOK && c.rhS.v < math.Min(95, set.RHPct+5):
+		if c.humStuckClearT == 0 {
+			c.humStuckClearT = t
+		}
+		if t-c.humStuckClearT >= 7200 {
+			c.humOnStuck = false
+		}
+	case c.humOnStuck && c.rhS.v >= sat:
+		c.humStuckClearT = 0
+	}
+	c.timed(CodeHumidOnStuck, c.humOnStuck, !c.humOnStuck, 0, c.rhS.v, set.RHPct)
+
+	// Heater working hard with no result. Not while dehumidifying: the compressor is
+	// then cooling on purpose, and the heater not winning is what reheat looks like.
+	if tOK && quiet && ts < set.TempC-0.7 && !ctl.comp.on && !ctl.dehum {
 		if ctl.heatOn {
 			c.heatEffort += dt
 		}
@@ -522,6 +624,16 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	c.timed(CodeDefrostShort, c.defrostShortN >= 3, c.defrostShortN == 0, 0, float64(c.defrostShortN), 3)
 }
 
+// dewPoint is the Magnus approximation, good to a few tenths of a degree here.
+func dewPoint(tC, rh float64) float64 {
+	if rh <= 0 {
+		return math.NaN()
+	}
+	const b, cc = 17.62, 243.12
+	g := math.Log(math.Min(rh, 100)/100) + b*tC/(cc+tC)
+	return cc * g / (b - g)
+}
+
 // announce starts an alarm's signalling. If the contact is already signalling
 // something, it closes briefly and opens again, so a new alarm is always a visible
 // change. A new alarm always sounds, whatever has been silenced.
@@ -532,6 +644,7 @@ func (c *Core) announce(a *activeAlarm) {
 	a.nextBuzz = c.t + c.cfg.RenotifySec
 	if c.signalling {
 		c.al.edgeUntil = c.t + c.cfg.EdgeSec
+		c.al.edges++
 	}
 	c.al.silenced = false
 }
@@ -586,16 +699,12 @@ func (c *Core) contactCalling(a *activeAlarm) bool {
 			a.nextCall = t + c.cfg.RenotifySec
 		}
 		return t < a.callUntil
-	case a.a.Severity == api.SevCritical:
-		return true // acknowledged or not, for as long as the condition is there
 	}
-	// A warning condition stands on the contact until it clears or someone says they
-	// know; acknowledged, it comes back after the re-notify time if it is still there.
-	if a.a.Acked && t-a.ackT >= c.cfg.RenotifySec {
-		a.a.Acked = false
-		c.announce(a)
-	}
-	return !a.a.Acked
+	// A condition, warning or critical, holds the contact for as long as it is there.
+	// An acknowledgement says someone has seen it, not that it has gone, and a remote
+	// monitor must not read it as cleared (integration defect 12). New alarms still
+	// show as a brief close and reopen (announce), so a standing one blinds nothing.
+	return true
 }
 
 func (c *Core) buzzerCalling(a *activeAlarm) bool {
@@ -613,6 +722,11 @@ func (c *Core) buzzerCalling(a *activeAlarm) bool {
 			c.announce(a)
 		}
 		return !a.a.Acked
+	}
+	if a.a.Acked && t-a.ackT >= c.cfg.RenotifySec {
+		// An acknowledged warning still there is a reminder again after the re-notify time.
+		a.a.Acked = false
+		c.announce(a)
 	}
 	if a.a.Acked {
 		return false

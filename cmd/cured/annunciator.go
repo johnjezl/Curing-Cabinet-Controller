@@ -19,6 +19,10 @@ const armDelay = 15 * time.Second
 // reassertEvery re-sends the line state, so a guard restart cannot leave it stale.
 const reassertEvery = 5 * time.Second
 
+// edgeFor is the brief close that marks a new alarm while the contact is open. It is
+// real time in every mode, so a monitor sampling every few seconds sees it.
+const edgeFor = 15 * time.Second
+
 // lineFilter sits between core and the outputs. It passes the plant outputs on and
 // keeps the two annunciator outputs for the annunciator, because only this process
 // knows everything that decides them. Both of core's annunciator lines are
@@ -74,6 +78,15 @@ type annunciator struct {
 	contactClosed     bool
 	buzzerOn          bool
 
+	// A new alarm while the contact is already open becomes a brief close, so a remote
+	// monitor sees a fresh open edge (ADR 0108, 0408). core reports its own as a count;
+	// this process's system alarms are found here.
+	coreEdges     func() uint64
+	lastCoreEdges uint64
+	prevSys       map[string]bool
+	edgeUntil     time.Time
+	openings      uint64
+
 	dropped atomic.Bool
 }
 
@@ -103,10 +116,30 @@ func (a *annunciator) tick(now time.Time, temp api.Quality, hold bool) {
 	if !a.armed && a.sawTemp && now.Sub(a.start) >= armDelay {
 		a.armed = true
 	}
-	closed := a.armed && a.f.coreHealthy.Load() && !a.sys.Calling()
-	buzz := a.f.coreBuzzer.Load() || a.sys.Sounding()
+	sysCall := a.sys.CallingCodes()
+	newEdge := false
+	if a.coreEdges != nil {
+		if n := a.coreEdges(); n != a.lastCoreEdges {
+			a.lastCoreEdges, newEdge = n, true
+		}
+	}
+	for code := range sysCall {
+		if !a.prevSys[code] {
+			newEdge = true
+		}
+	}
+	a.prevSys = sysCall
+	if newEdge && !a.contactClosed {
+		a.edgeUntil = now.Add(edgeFor)
+	}
+	inEdge := now.Before(a.edgeUntil)
+	closed := a.armed && ((a.f.coreHealthy.Load() && len(sysCall) == 0) || inEdge)
+	buzz := (a.f.coreBuzzer.Load() || a.sys.Sounding()) && !inEdge
 	if hold {
 		closed, buzz = false, true
+	}
+	if a.contactClosed && !closed {
+		a.openings++
 	}
 	a.contactClosed, a.buzzerOn = closed, buzz
 	if a.lines == nil || hold {
@@ -139,6 +172,13 @@ func (a *annunciator) State() (armed, contactClosed, buzzer bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.armed, a.contactClosed, a.buzzerOn
+}
+
+// Openings counts every time the contact opened, edges included, since start.
+func (a *annunciator) Openings() uint64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.openings
 }
 
 // watchedWD wraps the hardware layer's watchdog to learn about a lease drop, and
