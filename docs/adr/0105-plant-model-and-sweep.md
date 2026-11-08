@@ -53,3 +53,17 @@ range (a value), stuck (none; the door switch takes 0 or 1), everything else non
 switch fault on a plant without one. Refusals name the device and fault and say what would work. The reply names what
 was injected, and what it replaced (one fault per device); a repair says what it repaired, or that there was nothing.
 `TestInjectionParametersMustMeanSomething` holds this.
+
+Third amendment, after the second re-test: still accepted were values too small ever to show (a drift of 1e-9 per
+hour), a temperature or humidity fault while the climate chip was dead, bad-read or stuck (masked until the chip came
+back), `range` with a value the sensor can report (which only froze the reading, as `stuck` does), and the scale's
+`range` with no word that it is in raw ADC counts. A re-sent fault silently restarted its drift, a text value gave Go's
+parser error, an unknown name listed nothing, and `repair all` said only ok. Now: drift and offset have a floor of one
+sensor step (temperature and humidity 0.01 per hour and 0.1; air 0.001 of the reading per hour and 0.01 m/s; scale 1 g
+per hour and 1 g), spike at least 0.01; a temperature or humidity fault is refused while the chip is down, and the check
+runs on the simulation loop, so it sees the plant as the fault lands; `range` must be outside what the core accepts
+(temperature -20 to 60 °C, humidity 0.5 to 100 %, air -0.1 to 8 m/s, scale under 8388000 counts either way, said to be
+counts). The reply says `restarted` when the same fault is sent again, a text value is "not a number", an unknown device
+or fault lists the valid ones, and `repair all` lists what it repaired or says nothing was injected.
+`TestInjectionParametersMustMeanSomething`, `TestReadingFaultRefusedWhileTheChipIsDown` and
+`TestSimctlRepliesSayWhatHappened` hold this.

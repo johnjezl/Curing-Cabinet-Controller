@@ -272,6 +272,21 @@ func TestInjectionParametersMustMeanSomething(t *testing.T) {
 		{DevDehumid, FaultRelayStuckOn, 0, false, false}, // the base plant has no dehumidifier
 		{DevTemp, FaultRange, 85, true, true},
 		{DevTemp, FaultRange, 0, false, false},
+		// Second re-test: values too small to ever show, a range value the sensor can
+		// report (that is a stuck reading), and the scale's range in raw counts.
+		{DevTemp, FaultDrift, 1e-9, true, false},
+		{DevTemp, FaultDrift, 0.01, true, true},
+		{DevTemp, FaultOffset, 1e-9, true, false},
+		{DevTemp, FaultSpike, 1e-9, true, false},
+		{DevScale, FaultOffset, 0.5, true, false},
+		{DevScale, FaultDrift, 0.5, true, false},
+		{DevTemp, FaultRange, 20, true, false},
+		{DevRH, FaultRange, 50, true, false},
+		{DevRH, FaultRange, 101, true, true},
+		{DevAir, FaultRange, 1, true, false},
+		{DevAir, FaultRange, 40, true, true},
+		{DevScale, FaultRange, 100, true, false},
+		{DevScale, FaultRange, 8388607, true, true},
 	} {
 		err := pl.CheckInjection(c.d, c.k, c.p, c.has)
 		if (err == nil) != c.works {
@@ -280,5 +295,21 @@ func TestInjectionParametersMustMeanSomething(t *testing.T) {
 		if err != nil && strings.Contains(err.Error(), "device-") {
 			t.Errorf("refusal names a number, not the device: %v", err)
 		}
+	}
+}
+
+// A temperature or humidity fault behind a climate chip fault would not show: refused.
+func TestReadingFaultRefusedWhileTheChipIsDown(t *testing.T) {
+	pl := NewPlant(BasePlant())
+	pl.Inject(DevClimate, FaultDead, 0)
+	if err := pl.CheckInjection(DevTemp, FaultDrift, -1, true); err == nil || !strings.Contains(err.Error(), "climate") {
+		t.Fatalf("temp drift behind a dead chip: %v", err)
+	}
+	if err := pl.CheckInjection(DevTemp, FaultNone, 0, false); err != nil {
+		t.Fatalf("a repair is always allowed: %v", err)
+	}
+	pl.Inject(DevClimate, FaultNone, 0)
+	if err := pl.CheckInjection(DevTemp, FaultDrift, -1, true); err != nil {
+		t.Fatalf("chip back: %v", err)
 	}
 }

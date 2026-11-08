@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -371,5 +372,50 @@ func TestSystemEventSurvivesANewProcess(t *testing.T) {
 	s3.Persist(path)
 	if len(s3.Active()) != 0 || len(s3.History()) != 1 || s3.History()[0].Code != CodeRestartLoop {
 		t.Fatalf("acknowledged, it must be in the kept history: active %v history %v", s3.Codes(), s3.History())
+	}
+}
+
+// Integration defect 5, second re-test: the simulator's control tool says what happened,
+// in words: a re-sent fault restarts, a text value is not a number, an unknown name lists
+// what would work, and repairing everything lists what was repaired.
+func TestSimctlRepliesSayWhatHappened(t *testing.T) {
+	s := &simState{pl: sim.NewPlant(sim.BasePlant()), inbox: make(chan func(), 1)}
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case f := <-s.inbox:
+				f()
+			case <-stop:
+				return
+			}
+		}
+	}()
+	call := func(args ...string) string {
+		v, err := s.handle(args)
+		if err != nil {
+			return "error: " + err.Error()
+		}
+		b, _ := json.Marshal(v)
+		return string(b)
+	}
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"fault", "temp", "drift", "-0.5"}, `"injected":"temp:drift"`},
+		{[]string{"fault", "temp", "drift", "-0.5"}, `"restarted"`},
+		{[]string{"fault", "temp", "drift", "abc"}, `"abc" is not a number`},
+		{[]string{"fault", "thermo", "drift", "1"}, "devices: "},
+		{[]string{"fault", "temp", "melt"}, "faults: "},
+		{[]string{"fault", "temp", "range", "20"}, "refused"},
+		{[]string{"fault", "heat", "relay-stuck-on"}, `"injected":"heat:relay-stuck-on"`},
+		{[]string{"repair", "all"}, `"repaired":["heat:relay-stuck-on","temp:drift"]`},
+		{[]string{"repair", "all"}, "no fault was injected"},
+	} {
+		if got := call(c.args...); !strings.Contains(got, c.want) {
+			t.Errorf("%v: got %s, want %q in it", c.args, got, c.want)
+		}
 	}
 }

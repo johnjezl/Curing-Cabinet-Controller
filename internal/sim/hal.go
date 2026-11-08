@@ -130,6 +130,12 @@ func (pl *Plant) CheckInjection(d Device, k FaultKind, param float64, hasParam b
 	if err := CheckFault(d, k); err != nil {
 		return err
 	}
+	if (d == DevTemp || d == DevRH) && k != FaultNone {
+		switch ck := pl.Faults.kind(DevClimate); ck {
+		case FaultDead, FaultBadRead, FaultStuck:
+			return fmt.Errorf("%s %s: the climate chip is %s, so the fault would not show until climate is repaired", d, k, ck)
+		}
+	}
 	if hasParam && (math.IsNaN(param) || math.IsInf(param, 0)) {
 		return fmt.Errorf("%s %s: the value must be a number", d, k)
 	}
@@ -139,15 +145,32 @@ func (pl *Plant) CheckInjection(d Device, k FaultKind, param float64, hasParam b
 		}
 		return nil
 	}
+	// The smallest value that moves the reading by one sensor step within a day (drift)
+	// or at once (offset), and the values a sensor cannot report (range).
+	minDrift, minOffset, unit := 0.01, 0.1, "units"
+	inRange := func(v float64) bool { return false }
+	rangeEg := ""
+	switch d {
+	case DevTemp:
+		unit, inRange, rangeEg = "°C", func(v float64) bool { return v >= -20 && v <= 60 }, "below -20 or above 60 °C (e.g. 'temp range 85')"
+	case DevRH:
+		unit, inRange, rangeEg = "%RH", func(v float64) bool { return v >= 0.5 && v <= 100 }, "below 0.5 or above 100 % (e.g. 'rh range 101')"
+	case DevAir:
+		minDrift, minOffset, unit = 0.001, 0.01, "m/s (drift: share of the reading)"
+		inRange, rangeEg = func(v float64) bool { return v >= -0.1 && v <= 8 }, "below -0.1 or above 8 m/s (e.g. 'air range 40')"
+	case DevScale:
+		minDrift, minOffset, unit = 1, 1, "g"
+		inRange, rangeEg = func(v float64) bool { return math.Abs(v) < 8388000 }, "a raw ADC count at its limit, 8388000 or more either way (e.g. 'scale range 8388607'); range is in counts, not grams"
+	}
 	switch {
 	case k == FaultDrift:
-		return need("a non-zero rate in units per virtual hour, at most 50 either way (e.g. 'temp drift -0.5')", param != 0 && math.Abs(param) <= 50)
+		return need(fmt.Sprintf("a rate in %s per virtual hour, at least %g and at most 50 either way, or it never shows (e.g. '%s drift -0.5')", unit, minDrift, d), math.Abs(param) >= minDrift && math.Abs(param) <= 50)
 	case k == FaultOffset:
-		return need("a non-zero offset, at most 100 either way (e.g. 'temp offset -2')", param != 0 && math.Abs(param) <= 100)
+		return need(fmt.Sprintf("an offset in %s, at least %g and at most 100 either way (e.g. '%s offset -2')", unit, minOffset, d), math.Abs(param) >= minOffset && math.Abs(param) <= 100)
 	case k == FaultSpike:
-		return need("the share of samples that spike, above 0 and at most 1 (e.g. 'temp spike 0.2')", param > 0 && param <= 1)
+		return need(fmt.Sprintf("the share of samples that spike, at least 0.01 and at most 1 (e.g. '%s spike 0.2')", d), param >= 0.01 && param <= 1)
 	case k == FaultRange:
-		return need("the impossible value the sensor will report (e.g. 'temp range 85')", true)
+		return need("a value the sensor cannot report: "+rangeEg+"; a normal value would only freeze the reading, which is 'stuck'", !inRange(param))
 	case k == FaultStuck && d == DevDoorSwitch:
 		return need("the state it sticks in, 0 (closed) or 1 (open)", param == 0 || param == 1)
 	case hasParam:

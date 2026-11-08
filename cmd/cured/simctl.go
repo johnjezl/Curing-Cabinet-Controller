@@ -10,7 +10,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/johnjezl/curing-cabinet-controller/internal/api"
@@ -95,7 +97,21 @@ func argFloat(a []string, i int) (float64, error) {
 	if i >= len(a) {
 		return 0, fmt.Errorf("missing argument %d", i)
 	}
-	return strconv.ParseFloat(a[i], 64)
+	v, err := strconv.ParseFloat(a[i], 64)
+	if err != nil {
+		return 0, fmt.Errorf("%q is not a number", a[i])
+	}
+	return v, nil
+}
+
+// names lists a table's keys, for a refusal that says what would work.
+func names[V any](m map[string]V) string {
+	var out []string
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ", ")
 }
 
 func (s *simState) handle(a []string) (any, error) {
@@ -139,8 +155,11 @@ func (s *simState) handle(a []string) (any, error) {
 		}
 		d, okD := devNames[a[0]]
 		k, okK := faultNames[a[1]]
-		if !okD || !okK {
-			return nil, fmt.Errorf("unknown device %q or fault %q", a[0], a[1])
+		if !okD {
+			return nil, fmt.Errorf("unknown device %q; devices: %s", a[0], names(devNames))
+		}
+		if !okK {
+			return nil, fmt.Errorf("unknown fault %q; faults: %s", a[1], names(faultNames))
 		}
 		p := 0.0
 		if len(a) > 3 {
@@ -153,31 +172,47 @@ func (s *simState) handle(a []string) (any, error) {
 			}
 			p = v
 		}
-		if err := s.pl.CheckInjection(d, k, p, len(a) > 2); err != nil {
-			return nil, fmt.Errorf("refused: %v", err)
-		}
 		reply := map[string]any{"ok": true, "injected": d.String() + ":" + k.String()}
+		var refused error
 		err := s.onPlant(func() {
-			if prev := s.pl.FaultOn(d); prev != sim.FaultNone && prev != k {
+			if refused = s.pl.CheckInjection(d, k, p, len(a) > 2); refused != nil {
+				return
+			}
+			switch prev := s.pl.FaultOn(d); {
+			case prev == k:
+				reply["restarted"] = d.String() + ":" + k.String() + " (what it had built up starts again)"
+			case prev != sim.FaultNone:
 				reply["replaced"] = d.String() + ":" + prev.String() // one fault per device
 			}
 			s.pl.Inject(d, k, p)
 		})
+		if refused != nil {
+			return nil, fmt.Errorf("refused: %v", refused)
+		}
 		return reply, err
 	case "repair":
 		if len(a) != 1 {
 			return nil, errors.New("repair <device>|all")
 		}
 		if a[0] == "all" {
-			return ok, s.onPlant(func() {
+			var done []string
+			err := s.onPlant(func() {
 				for _, d := range devNames {
+					if prev := s.pl.FaultOn(d); prev != sim.FaultNone {
+						done = append(done, d.String()+":"+prev.String())
+					}
 					s.pl.Inject(d, sim.FaultNone, 0)
 				}
 			})
+			sort.Strings(done)
+			if len(done) == 0 {
+				return map[string]any{"ok": true, "note": "no fault was injected"}, err
+			}
+			return map[string]any{"ok": true, "repaired": done}, err
 		}
 		d, okD := devNames[a[0]]
 		if !okD {
-			return nil, fmt.Errorf("unknown device %q", a[0])
+			return nil, fmt.Errorf("unknown device %q; devices: %s", a[0], names(devNames))
 		}
 		reply := map[string]any{"ok": true}
 		err := s.onPlant(func() {
