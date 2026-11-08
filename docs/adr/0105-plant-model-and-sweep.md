@@ -28,3 +28,19 @@ All numbers are MEASURED-SIM. They show behavior against this model. Film, sorpt
 coil contact are the least certain parameters, and they drive the size of the RH swing.
 The rig has to replace these estimates before any number is claimed for a real cabinet.
 Metrics are recomputed from raw files by `scenario verify`.
+
+## Amendment: an injection that changes nothing is refused (integration defect 5)
+On the rig the integration critic injected `climate drift -4`, `-40`, `+3` and `climate stuck`. Each
+returned `{"ok":true}` and showed in the fault list, and the reading still tracked the truth within
+0.5 °C for up to 36 virtual hours. The plant modelled drift and stuck only on the `temp` and `rh`
+channels; the `climate` device (the DHT22 itself) modelled only dead and bad frames, and accepted
+everything else silently. The part A sweep injected drift on `temp`, so its figures in ADR 0109 stand.
+
+Options: map `climate drift` onto temperature (guesses what the operator meant, and leaves humidity out);
+or model exactly what a device can do and refuse the rest.
+
+Decision: refuse the rest. `sim.CheckFault` holds the table of what each device models; `simctl fault`
+returns an error naming the right device (`climate drift` says to use `temp` or `rh`; `temp dead` says to
+use `climate`), and `Plant.Inject` records nothing it does not model, so the fault list never shows an
+injection with no effect. `climate stuck` is now modelled: the chip answers on time with the last frame it
+delivered, on both readings. `TestDriftAndStuckChangeTheReading` and `TestNoOpInjectionsAreRefused` hold this.

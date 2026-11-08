@@ -105,7 +105,7 @@ stop_unit() {
 
 simctl() {
   local a
-  for a in "$@"; do case "$a" in *[!A-Za-z0-9._-]*|"") echo "local-rig.sh: bad argument '$a'" >&2; exit 2 ;; esac; done
+  for a in "$@"; do case "$a" in *[!A-Za-z0-9._+-]*|"") echo "local-rig.sh: bad argument '$a'" >&2; exit 2 ;; esac; done
   # shellcheck disable=SC2046
   $(sandbox) "$L/bin/cured" simctl "$@"
 }

@@ -118,7 +118,7 @@ build_cured() { # prints path of the arm64 binary
 
 simctl() { # <args validated by the caller's case>: only a --sim process has this socket
   local a
-  for a in "$@"; do case "$a" in *[!A-Za-z0-9._-]*|"") echo "rig.sh: bad argument '$a'" >&2; exit 2 ;; esac; done
+  for a in "$@"; do case "$a" in *[!A-Za-z0-9._+-]*|"") echo "rig.sh: bad argument '$a'" >&2; exit 2 ;; esac; done
   lock
   ssh_rig "sudo -u curing /opt/curing/bin/cured simctl $*"
 }

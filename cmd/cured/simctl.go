@@ -142,6 +142,9 @@ func (s *simState) handle(a []string) (any, error) {
 		if !okD || !okK {
 			return nil, fmt.Errorf("unknown device %q or fault %q", a[0], a[1])
 		}
+		if err := sim.CheckFault(d, k); err != nil {
+			return nil, fmt.Errorf("%s %s refused: %v", a[0], a[1], err)
+		}
 		p := 0.0
 		if len(a) > 2 {
 			v, err := argFloat(a, 2)

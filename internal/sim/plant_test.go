@@ -152,3 +152,89 @@ func TestSweepIsReproducibleAndCoversRanges(t *testing.T) {
 		t.Fatalf("Latin hypercube did not cover CompW: %v..%v", lo, hi)
 	}
 }
+
+// readMean reads the climate chip for dt seconds and returns the mean reading minus
+// the plant's true sensor-node temperature and humidity.
+func readMean(pl *Plant, dt int) (dT, dRH float64, n int) {
+	c := simClimate{pl}
+	for i := 0; i < dt; i++ {
+		pl.Step(1)
+		tv, rv, _, err := c.Read()
+		if err != nil {
+			continue
+		}
+		dT += tv - pl.sT
+		dRH += rv - pl.sRH
+		n++
+	}
+	if n > 0 {
+		dT, dRH = dT/float64(n), dRH/float64(n)
+	}
+	return dT, dRH, n
+}
+
+// Integration defect 5: drift and stuck injections were accepted and changed nothing.
+// Every injection the simulator accepts must move the reading away from the truth.
+func TestDriftAndStuckChangeTheReading(t *testing.T) {
+	newPl := func() *Plant {
+		p := BasePlant()
+		p.DHTErrProb, p.DHTSpikePerHour = 0, 0
+		pl := NewPlant(p)
+		pl.CmdHeat = true // keep the truth moving, so a frozen reading parts from it
+		pl.FanDuty, pl.fanRunning = 40, true
+		readMean(pl, 600)
+		return pl
+	}
+	pl := newPl()
+	pl.Inject(DevTemp, FaultDrift, -4)
+	readMean(pl, 3600)
+	if d, _, _ := readMean(pl, 60); d > -3.5 {
+		t.Fatalf("temp drift -4 C/h: reading minus truth after 1 h is %+.2f C", d)
+	}
+	pl = newPl()
+	pl.Inject(DevRH, FaultDrift, 3)
+	readMean(pl, 2*3600)
+	if _, d, _ := readMean(pl, 60); d < 5 {
+		t.Fatalf("rh drift +3 %%/h: reading minus truth after 2 h is %+.2f %%", d)
+	}
+	pl = newPl()
+	pl.Inject(DevClimate, FaultStuck, 0)
+	c := simClimate{pl}
+	t0, rh0, _, err := c.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3*3600; i++ {
+		pl.Step(1)
+		tv, rv, age, err := c.Read()
+		if err != nil || tv != t0 || rv != rh0 || age > 2 {
+			t.Fatalf("stuck chip at %d s: %.1f/%.1f age %.0f err %v, want %.1f/%.1f fresh", i, tv, rv, age, err, t0, rh0)
+		}
+	}
+	if math.Abs(pl.sT-t0) < 2 {
+		t.Fatalf("the truth did not move (%.1f vs stuck %.1f): the test proves nothing", pl.sT, t0)
+	}
+}
+
+func TestNoOpInjectionsAreRefused(t *testing.T) {
+	for _, c := range []struct {
+		d Device
+		k FaultKind
+	}{{DevClimate, FaultDrift}, {DevClimate, FaultOffset}, {DevTemp, FaultDead}, {DevFan, FaultDrift}, {DevOutputs, FaultStuck}} {
+		if CheckFault(c.d, c.k) == nil {
+			t.Errorf("device %d fault %d accepted with no effect", c.d, c.k)
+		}
+		pl := NewPlant(BasePlant())
+		pl.Inject(c.d, c.k, 1)
+		if pl.Faults.kind(c.d) != FaultNone {
+			t.Errorf("device %d fault %d recorded although it does nothing", c.d, c.k)
+		}
+	}
+	for d, ks := range implemented {
+		for _, k := range ks {
+			if CheckFault(d, k) != nil {
+				t.Errorf("device %d fault %d refused", d, k)
+			}
+		}
+	}
+}

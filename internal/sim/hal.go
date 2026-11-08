@@ -66,8 +66,57 @@ type Faults struct {
 
 func (f *Faults) kind(d Device) FaultKind { return f.k[d] }
 
-// Inject sets a fault at the plant's current time. Use FaultNone to repair.
+// implemented lists every fault each device really models. Anything else would be
+// accepted and change nothing, which is how a "drift" once passed a test by doing
+// nothing (integration defect 5). CheckFault refuses it.
+var implemented = map[Device][]FaultKind{
+	// One DHT22: dead, bad frames, or a frozen frame on both channels.
+	DevClimate: {FaultDead, FaultBadRead, FaultStuck},
+	// The two channels of that chip, for faults that hit one reading.
+	DevTemp:       {FaultStuck, FaultSpike, FaultDrift, FaultOffset, FaultRange},
+	DevRH:         {FaultStuck, FaultSpike, FaultDrift, FaultOffset, FaultRange},
+	DevAir:        {FaultDead, FaultBadRead, FaultStuck, FaultSpike, FaultDrift, FaultOffset, FaultRange},
+	DevScale:      {FaultDead, FaultStuck, FaultSpike, FaultDrift, FaultOffset, FaultRange},
+	DevFan:        {FaultStall},
+	DevTach:       {FaultDead, FaultStuck},
+	DevDuct:       {FaultBlocked},
+	DevCool:       {FaultRelayStuckOn, FaultRelayStuckOff},
+	DevHeat:       {FaultRelayStuckOn, FaultRelayStuckOff},
+	DevHumid:      {FaultRelayStuckOn, FaultRelayStuckOff},
+	DevDehumid:    {FaultRelayStuckOn, FaultRelayStuckOff},
+	DevCompressor: {FaultNoCool},
+	DevHumidifier: {FaultEmpty},
+	DevDoorSwitch: {FaultDead, FaultStuck},
+	DevOutputs:    {FaultWriteErr},
+}
+
+// CheckFault says whether injecting k into d changes anything. FaultNone (repair)
+// always does.
+func CheckFault(d Device, k FaultKind) error {
+	if k == FaultNone {
+		return nil
+	}
+	for _, ok := range implemented[d] {
+		if ok == k {
+			return nil
+		}
+	}
+	switch {
+	case d == DevClimate && (k == FaultDrift || k == FaultOffset || k == FaultSpike || k == FaultRange):
+		return errors.New("the climate chip has two readings: inject this on temp or rh")
+	case (d == DevTemp || d == DevRH) && (k == FaultDead || k == FaultBadRead):
+		return errors.New("temperature and humidity come from one chip: inject this on climate")
+	}
+	return fmt.Errorf("device %d does not model fault %d; the injection would change nothing", d, k)
+}
+
+// Inject sets a fault at the plant's current time. Use FaultNone to repair. A
+// fault CheckFault refuses is not recorded, so the fault table never lists one
+// that has no effect.
 func (pl *Plant) Inject(d Device, k FaultKind, param float64) {
+	if CheckFault(d, k) != nil {
+		return
+	}
 	pl.Faults.k[d] = k
 	pl.Faults.param[d] = param
 	pl.Faults.since[d] = pl.T
@@ -104,10 +153,23 @@ func (s simClimate) Read() (float64, float64, float64, error) {
 		return 0, 0, 0, fmt.Errorf("dht22 checksum: %w", hal.ErrBadRead)
 	}
 	if pl.T-pl.dhtLastSampleT >= 2 {
+		had := pl.dhtHave && !pl.dhtErr
 		pl.dhtLastSampleT = pl.T
 		pl.dhtHave = true
 		pl.dhtErr = pl.rng.Float64() < p.DHTErrProb
-		if !pl.dhtErr {
+		if k == FaultStuck {
+			// The chip answers on time with a valid frame that never changes: the
+			// last one it delivered.
+			if !pl.haveStuckT || !pl.haveStuckRH {
+				pl.stuckT, pl.stuckRH = pl.lastTemp, pl.lastRH
+				if !had {
+					pl.stuckT, pl.stuckRH = pl.sampleTemp(), pl.sampleRH()
+				}
+				pl.haveStuckT, pl.haveStuckRH = true, true
+			}
+			pl.dhtErr = false
+			pl.lastTemp, pl.lastRH = pl.stuckT, pl.stuckRH
+		} else if !pl.dhtErr {
 			pl.lastTemp = pl.sampleTemp()
 			pl.lastRH = pl.sampleRH()
 			// A glitch that passes the checksum is real on these parts.
