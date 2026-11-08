@@ -40,3 +40,22 @@ was not recorded, and the panel showed it silenced after it had ended; the openi
 - The opening count is kept in /run/curing-cured/contact, so it survives restarts within a boot, and a process that dies
   with the contact closed has that opening counted at the next start.
 - cured's system alarms are written to core's event journal (type "system"), so the record of a cure has them all.
+
+## Revision after the second re-test (defects 3 and 12)
+The re-test passed the buzzer, acknowledgement, silence and restart parts, and failed both defects on transitions.
+- core counted a new alarm for cured's brief close only when core itself was signalling. With only the restart burst
+  (a cured system alarm) holding the contact, a new SENSOR_CLIMATE_FAULT made no transition in 26 of 27 onsets, and
+  FAN_STALL, DOOR_OPEN and others none either. core now counts every new or escalated alarm; cured's annunciator decides
+  whether a brief close is needed (the contact is open and armed).
+- Started with the climate sensor dead, the relay never armed (it waited for a good temperature reading), so no new
+  alarm could make a transition for as long as the sensor stayed dead. It now also arms 60 s after start without one:
+  by then core has raised the sensor fault, which holds the contact open by itself. Before 60 s the rule is unchanged,
+  so a start with an unread sensor cannot close the contact. No brief close starts while unarmed.
+- A power cut set the opening count to 0 and did not count the opening the cut made. The count moves from /run to the
+  state directory (/var/lib/curing/contact, or the simulator's), written atomically.
+- The restart-burst alarm went away unacknowledged 30 minutes after the last start, with no record. As an event it now
+  stays listed until acknowledged; it calls the contact for 30 minutes, as before, and new alarms make transitions
+  over it.
+- A silence ended early by a new alarm is journalled ("silence ended early: <code> sounded").
+`TestDeadSensorAtStartStillGivesFreshTransitions`, `TestOpeningCountSurvivesAPowerCut` and
+`TestNewAlarmCountedAndSilenceEndRecordedAndRecoveredSensorNotStuck` hold this.

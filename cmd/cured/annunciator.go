@@ -16,6 +16,12 @@ import (
 // service in a crash loop therefore never looks healthy. See ADR 0402.
 const armDelay = 15 * time.Second
 
+// armBlind is when the relay arms with no good temperature reading yet. By then core
+// has had time to raise the sensor fault, which keeps the contact open; unarmed, the
+// contact could not make a fresh transition for any new alarm for as long as the
+// sensor stayed dead (integration defect 12, second re-test).
+const armBlind = 60 * time.Second
+
 // reassertEvery re-sends the line state, so a guard restart cannot leave it stale.
 const reassertEvery = 5 * time.Second
 
@@ -114,7 +120,7 @@ func (a *annunciator) tick(now time.Time, temp api.Quality, hold bool) {
 	if temp == api.QualityOK {
 		a.sawTemp = true
 	}
-	if !a.armed && a.sawTemp && now.Sub(a.start) >= armDelay {
+	if !a.armed && ((a.sawTemp && now.Sub(a.start) >= armDelay) || now.Sub(a.start) >= armBlind) {
 		a.armed = true
 	}
 	sysCall := a.sys.CallingCodes()

@@ -210,13 +210,15 @@ const (
 	panelStuckAfter  = 60 * time.Second
 	restartWindow    = 600.0 // seconds of uptime
 	restartThreshold = 4
-	restartStable    = 30 * time.Minute
 )
 
-// wireOpenings keeps the contact's opening count across restarts within a boot (the
-// file is on tmpfs). A process that dies with the contact closed opens it by dying,
+// wireOpenings keeps the contact's opening count across restarts. A process that
+// dies with the contact closed opens it by dying,
 // and that opening is counted at the next start (ADR 0408).
-func (r *runtime) wireOpenings() {
+//
+// The file is in the state directory, so the count survives a power cut, and the
+// opening the cut itself made is counted (integration defect 12, second re-test).
+func (r *runtime) wireOpenings(contactFile string) {
 	var n uint64
 	closed := false
 	if b, err := os.ReadFile(contactFile); err == nil {
@@ -233,7 +235,7 @@ func (r *runtime) wireOpenings() {
 		if closed {
 			c = 1
 		}
-		if err := os.WriteFile(contactFile, []byte(fmt.Sprintf("%d %d\n", n, c)), 0o640); err != nil {
+		if err := atomicWrite(contactFile, []byte(fmt.Sprintf("%d %d\n", n, c))); err != nil {
 			logfJ("<4>cured: contact count: %v", err)
 		}
 	}
@@ -292,9 +294,6 @@ func (r *runtime) supervise(ctx context.Context) {
 		if n%30 == 0 {
 			r.checkSafe()
 			missing = r.checkDisplay()
-		}
-		if time.Since(r.started) > restartStable {
-			r.sys.Clear(CodeRestartLoop)
 		}
 		if age := time.Since(time.Unix(0, r.lastFrame.Load())); !missing && age > panelStuckAfter {
 			r.sys.Raise(CodePanelStuck, api.SevCritical, "Front panel not updating",
@@ -459,7 +458,7 @@ func runReal(ctx context.Context) error {
 	r.uiCtl = r.v
 	r.ann.coreEdges = c.EdgeCount
 	r.sys.SetRecord(c.RecordSystem)
-	r.wireOpenings()
+	r.wireOpenings("/var/lib/curing/contact")
 
 	uiCtx, uiStop := context.WithCancel(context.Background())
 	uiDone := make(chan struct{})

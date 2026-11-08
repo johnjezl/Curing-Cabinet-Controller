@@ -1446,3 +1446,43 @@ func TestOutputWriteFaultOpensContactThroughGuard(t *testing.T) {
 		t.Fatal("control did not resume")
 	}
 }
+
+// Integration defects 3 and 12, second re-test. core counts every new alarm for the
+// annunciator even when it was signalling nothing itself, since a system alarm may be
+// holding the contact; a silence a new alarm ends early is on record; and a sensor
+// back from a fault is not called stuck.
+func TestNewAlarmCountedAndSilenceEndRecordedAndRecoveredSensorNotStuck(t *testing.T) {
+	r := newRun(t)
+	r.SetPoint(13, 76, 1.2)
+	r.Advance(2 * 3600)
+	if n := len(r.Core.Snapshot().Active); n != 0 {
+		t.Fatalf("setup: %d alarms active", n)
+	}
+	before := r.Core.EdgeCount()
+	if err := r.Core.Do(api.Command{Kind: api.CmdSilence}); err != nil {
+		t.Fatal(err)
+	}
+	r.Evs = nil
+	r.Plant.Inject(sim.DevClimate, sim.FaultDead, 0)
+	r.Advance(3 * 3600)
+	if r.Core.EdgeCount() == before {
+		t.Error("a new alarm with nothing else calling was not counted")
+	}
+	ended := false
+	for _, e := range r.Evs {
+		if e.Kind == core.EvSilence && strings.Contains(e.Msg, "ended") {
+			ended = true
+		}
+	}
+	if !ended {
+		t.Error("the silence the new alarm ended has no end record")
+	}
+	r.Plant.Inject(sim.DevClimate, sim.FaultNone, 0)
+	r.Evs = nil
+	r.Advance(1800)
+	for _, e := range r.Evs {
+		if e.Kind == "alarm" && (e.Code == core.CodeTempSuspect || e.Code == core.CodeRHSuspect) {
+			t.Errorf("%s raised on a sensor back from a fault", e.Code)
+		}
+	}
+}

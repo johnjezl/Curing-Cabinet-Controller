@@ -150,10 +150,41 @@ func TestContactEnergizedOnlyWhenHealthyAndArmed(t *testing.T) {
 func TestContactNeedsAGoodTemperatureFirst(t *testing.T) {
 	a, f, l, _, clock := testAnn()
 	_ = f.Set(hal.OutAlarm, true)
-	*clock = clock.Add(time.Hour)
+	*clock = clock.Add(armBlind - time.Second)
 	a.Tick(*clock, api.QualityFault)
 	if l.alarm {
 		t.Fatal("no good reading yet")
+	}
+}
+
+// Integration defect 12, second re-test: started with the climate sensor dead, the
+// relay never armed, so no later alarm could make a fresh transition. It arms once core
+// has had time to raise the sensor fault, which keeps the contact open by itself.
+func TestDeadSensorAtStartStillGivesFreshTransitions(t *testing.T) {
+	a, f, l, _, clock := testAnn()
+	var edges uint64
+	a.coreEdges = func() uint64 { return edges }
+	_ = f.Set(hal.OutAlarm, false) // core calls the sensor fault
+	for i := 0; i < int(armBlind/time.Second); i++ {
+		*clock = clock.Add(time.Second)
+		a.Tick(*clock, api.QualityFault)
+		if l.alarm {
+			t.Fatalf("closed %d s after start with the sensor dead", i+1)
+		}
+	}
+	if armed, _, _ := a.State(); !armed {
+		t.Fatal("not armed a minute after start with the sensor dead")
+	}
+	edges++ // a new critical alarm
+	*clock = clock.Add(time.Second)
+	a.Tick(*clock, api.QualityFault)
+	if !l.alarm {
+		t.Fatal("a new alarm made no fresh transition")
+	}
+	*clock = clock.Add(edgeFor)
+	a.Tick(*clock, api.QualityFault)
+	if l.alarm {
+		t.Fatal("and the contact must open again")
 	}
 }
 
@@ -458,5 +489,19 @@ func TestSimctlRepliesSayWhatHappened(t *testing.T) {
 		if got := call(c.args...); !strings.Contains(got, c.want) {
 			t.Errorf("%v: got %s, want %q in it", c.args, got, c.want)
 		}
+	}
+}
+
+// Integration defect 12, second re-test: a power cut reset the opening count to 0, and
+// the opening the cut made was not counted. The count is kept in the state directory.
+func TestOpeningCountSurvivesAPowerCut(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "contact")
+	r1 := &runtime{ann: newAnnunciator(nil, &lineFilter{next: &recLines{}}, newSysAlarms(time.Now, func() bool { return true }, func(string, ...any) {}), time.Now())}
+	r1.wireOpenings(path)
+	r1.ann.persist(43, true) // 43 openings so far, contact closed when power went
+	r2 := &runtime{ann: newAnnunciator(nil, &lineFilter{next: &recLines{}}, newSysAlarms(time.Now, func() bool { return true }, func(string, ...any) {}), time.Now())}
+	r2.wireOpenings(path)
+	if got := r2.ann.Openings(); got != 44 {
+		t.Fatalf("openings after the cut %d, want 44 (43 and the cut's own)", got)
 	}
 }

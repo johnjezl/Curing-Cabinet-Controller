@@ -483,7 +483,7 @@ func runSim(ctx context.Context, o simOptions) error {
 	r.v = &view{c: c, sys: r.sys}
 	r.ann.coreEdges = c.EdgeCount
 	r.sys.SetRecord(c.RecordSystem)
-	r.wireOpenings()
+	r.wireOpenings(filepath.Join(simStateDir, "contact"))
 	r.uiCtl = faultyUI{Controller: r.v, hook: s.uiPanicHook}
 	r.statusX = func() any { return s.pub.Load() }
 	if fresh {

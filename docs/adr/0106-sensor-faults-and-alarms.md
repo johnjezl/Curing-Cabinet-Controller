@@ -42,3 +42,11 @@ at boot, with no erase command. Times carry a clock-trusted flag.
 ## Consequences
 The dry contact is on = alarm, so a dead controller cannot signal: an external watchdog or
 normally-closed wiring is needed (gap). Warm load with no door switch may raise a warning.
+
+## Amendment (integration defect 12, second re-test)
+Every recovery of the climate sensor raised TEMP_SUSPECT (critical) for a few seconds, and with it a brief contact
+close. The median window still held samples from before the fault, so after a long one the first true readings were
+rejected as jumps, temperature recovered a few samples after humidity, and one channel in fault reads as a channel
+failing validation. The stuck test also counted the fault's duration as time without change. While a channel is in
+fault both now start again: the window empties and the stuck timer restarts, so samples after the gap are judged only
+against each other.

@@ -699,11 +699,16 @@ func dewPoint(tC, rh float64) float64 {
 // a visible change. The buzzer does not stop for that close: it must sound while a
 // critical alarm stands (integration defect 12). A new alarm always sounds,
 // whatever has been silenced.
+//
+// Every new alarm is counted for cured's annunciator, whatever core itself was
+// signalling: the contact may be held open by something core does not know of (a
+// system alarm), and a new alarm must still be a fresh transition (integration
+// defect 3, second re-test).
 func (c *Core) announce(a *activeAlarm) {
 	c.realert(a)
+	c.al.edges++
 	if c.signalling {
 		c.al.edgeUntil = c.t + c.cfg.EdgeSec
-		c.al.edges++
 	}
 }
 
@@ -714,7 +719,10 @@ func (c *Core) realert(a *activeAlarm) {
 	a.nextCall = c.t + c.cfg.RenotifySec
 	a.buzzUntil = c.t + c.cfg.NotifySec
 	a.nextBuzz = c.t + c.cfg.RenotifySec
-	c.al.silenced = false
+	if c.al.silenced {
+		c.al.silenced = false
+		c.event(Event{Type: EvSilence, Msg: "silence ended early: " + a.a.Code + " sounded"}) // both ends are on record
+	}
 }
 
 // escalate raises an active alarm's severity and announces it again.

@@ -174,6 +174,13 @@ func (c *channel) update(t, dt float64, active bool) {
 	switch {
 	case age >= c.faultAfter:
 		c.quality, c.note = api.QualityFault, "no valid reading"
+		// A reading that is not arriving cannot be "not changing", and the samples from
+		// before the gap cannot judge a jump after it: both start again when samples
+		// return. Otherwise the first true readings after a long fault are rejected as
+		// jumps, and the chip's two channels recover apart, which reads as a one-channel
+		// fault (integration defect 12, second re-test: TEMP_SUSPECT on every recovery).
+		c.stuck, c.lastChange, c.activeSince = false, t, 0
+		c.n, c.idx, c.candN = 0, 0, 0
 		// okRun is rebuilt only by samples that arrive after the fault began.
 		if c.okRun > 0 && age >= c.faultAfter {
 			c.okRun = 0
