@@ -213,6 +213,34 @@ const (
 	restartStable    = 30 * time.Minute
 )
 
+// wireOpenings keeps the contact's opening count across restarts within a boot (the
+// file is on tmpfs). A process that dies with the contact closed opens it by dying,
+// and that opening is counted at the next start (ADR 0408).
+func (r *runtime) wireOpenings() {
+	var n uint64
+	closed := false
+	if b, err := os.ReadFile(contactFile); err == nil {
+		var c int
+		if _, err := fmt.Sscan(string(b), &n, &c); err == nil && c == 1 {
+			closed = true
+		}
+	}
+	if closed {
+		n++
+	}
+	write := func(n uint64, closed bool) {
+		c := 0
+		if closed {
+			c = 1
+		}
+		if err := os.WriteFile(contactFile, []byte(fmt.Sprintf("%d %d\n", n, c)), 0o640); err != nil {
+			logfJ("<4>cured: contact count: %v", err)
+		}
+	}
+	write(n, false)
+	r.ann.openings, r.ann.persist = n, write
+}
+
 // noteStart records this start and counts recent ones. The file is on tmpfs, so a
 // reboot resets the count; restarts inside one boot are what it is for.
 func (r *runtime) noteStart() {
@@ -281,7 +309,7 @@ func (r *runtime) statusMap() map[string]any {
 		"first_frame_uptime": float64(r.upFirstFrm.Load()) / 1000, "control_ticks": r.ticks.Load(),
 		"control_last_tick_age_s": time.Since(time.Unix(0, r.lastTick.Load())).Seconds(), "frames": r.frames.Load(),
 		"last_frame_age_s": time.Since(time.Unix(0, r.lastFrame.Load())).Seconds(),
-		"system_alarms": r.sys.Codes(), "annunciator_lines_driven": r.linesDriven,
+		"system_alarms":    r.sys.Codes(), "annunciator_lines_driven": r.linesDriven,
 	}
 	var openings uint64
 	if r.ann != nil {
@@ -420,6 +448,8 @@ func runReal(ctx context.Context) error {
 	r.c, r.v = c, &view{c: c, sys: r.sys}
 	r.uiCtl = r.v
 	r.ann.coreEdges = c.EdgeCount
+	r.sys.SetRecord(c.RecordSystem)
+	r.wireOpenings()
 
 	uiCtx, uiStop := context.WithCancel(context.Background())
 	uiDone := make(chan struct{})

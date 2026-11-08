@@ -65,7 +65,7 @@ var alarmDefs = map[string]alarmDef{
 	CodeRHDisagree:   {api.SevCritical, "Humidity reading disagrees with how the cabinet is behaving", "Check with a separate hygrometer and enter the result. Heating and humidifying are held off. Clears after a passed check or 48 h.", "%RH"},
 	CodeDryingShift:  {api.SevWarning, "Drying rate changed with no change of setpoint", "Check temperature and humidity against separate instruments, and check nothing touches the scale.", ""},
 	CodeRefDisagree:  {api.SevCritical, "Sensor differs from the reference instrument", "Replace or calibrate the sensor, then check again.", ""},
-	CodeOutDropped:   {api.SevCritical, "Outputs were switched off by the hardware guard", "The control loop stalled and the guard cut all outputs. Control has resumed. Check the system log.", ""},
+	CodeOutDropped:   {api.SevCritical, "Outputs were switched off by the hardware guard", "Control stopped renewing the guard (a stalled loop, or outputs that could not be written) and it cut all outputs. Control has resumed. Check the system log.", ""},
 	CodeDefrostShort: {api.SevWarning, "Defrost keeps being cut short", "The air reaches its limit before the coil is clear. Check for ice on the coil and the room temperature.", ""},
 }
 
@@ -462,10 +462,12 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 				c.coolOffStart = t
 				c.coolOffDew0 = dew
 			}
-			// A closed compressor relay condenses water and pulls the dew point down; mist
-			// from a humidifier stuck on also cools the air, but pushes the dew point up.
-			humidifying := !math.IsNaN(dew) && !math.IsNaN(c.coolOffDew0) && dew > c.coolOffDew0+0.3
-			if c.coolOffT0-ts >= 1.0 && t-c.coolOffStart < 1500 && !humidifying {
+			// A closed compressor relay condenses water and pulls the dew point down about
+			// as fast as the air. Mist from a humidifier stuck on also cools the air but
+			// pushes the dew point up, and a room turned cold cools the air far faster than
+			// its leak of dry air lowers the dew point.
+			condensing := math.IsNaN(dew) || math.IsNaN(c.coolOffDew0) || c.coolOffDew0-dew >= 0.5*(c.coolOffT0-ts)
+			if c.coolOffT0-ts >= 1.0 && t-c.coolOffStart < 1500 && condensing {
 				if !c.coolStuck {
 					c.coolStuckMin = ts
 				}
@@ -491,8 +493,14 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	// a falling reading is not the only sign: the heater has suddenly become busy
 	// while the compressor is commanded off. Only in a cabinet that normally needs
 	// cooling: in a heating regime a busy heater is ordinary.
+	// Only while the busy heater holds the air near setpoint: a closed compressor relay
+	// condenses water against a heater that keeps up. A room turned cold with a heater
+	// that does not work lets the air fall well under setpoint, and that is
+	// HEAT_NO_EFFECT; its cold walls pull the dew point down too.
+	dew30 := c.dewRing[len(c.dewRing)-1]
+	dewFalling := (math.IsNaN(dew) || math.IsNaN(dew30) || dew30-dew >= 0.3) && ts > set.TempC-1
 	if tOK && quiet && !ctl.comp.on && ctl.driftAge >= 6*3600 && c.st.CoolDuty > 0.03 && ctl.dutyFast.v < c.st.CoolDuty-0.2 && ctl.dutyFast.v < -0.1 &&
-		!c.humOnStuck && c.humSatSince == 0 { // reheat against a humidifier's mist is not this
+		!c.humOnStuck && c.humSatSince == 0 && dewFalling { // reheat against a humidifier's mist is not this
 		c.coolStuck = true
 		c.coolStuckMin = ts
 	} else if c.coolStuck && ctl.dutyFast.v > -0.05 && ts > set.TempC-1 {
@@ -521,6 +529,8 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 		c.tRingT = t + 300
 		copy(c.tRing[1:], c.tRing[:len(c.tRing)-1])
 		c.tRing[0] = ts
+		copy(c.dewRing[1:], c.dewRing[:len(c.dewRing)-1])
+		c.dewRing[0] = dew
 	}
 	t30 := c.tRing[len(c.tRing)-1] // the reading about 30 min ago
 	noDoor := c.lastDoorT == 0 || t-c.lastDoorT > 3600
@@ -561,8 +571,14 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	rhOK := c.chRH.ok()
 	sat := math.Max(97, set.RHPct+5)
 	if !ctl.defrost {
+		// A cabinet gone cold also saturates its air, with the water it already had: the
+		// dew point stays where the setpoint puts it and the air is well under setpoint.
+		// Mist adds water and lifts the dew point toward the setpoint temperature, with
+		// the air held near setpoint.
+		setDew := dewPoint(set.TempC, set.RHPct)
+		wet := !math.IsNaN(dew) && dew >= setDew+0.3*(set.TempC-setDew) && ts >= set.TempC-1.5
 		at := 0.0
-		if rhOK && c.rhS.v >= sat && t-c.lastHumOn >= 1800 && noDoor {
+		if rhOK && c.rhS.v >= sat && wet && t-c.lastHumOn >= 1800 && noDoor {
 			at = 1
 		}
 		c.humSat.add(at, dt)
@@ -591,9 +607,9 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	}
 	c.timed(CodeHumidOnStuck, c.humOnStuck, !c.humOnStuck, 0, c.rhS.v, set.RHPct)
 
-	// Heater working hard with no result. Not while dehumidifying: the compressor is
-	// then cooling on purpose, and the heater not winning is what reheat looks like.
-	if tOK && quiet && ts < set.TempC-0.7 && !ctl.comp.on && !ctl.dehum {
+	// Heater working hard with no result. Not against air saturated by mist: evaporation
+	// takes the heat, and that is HUMID_STUCK_ON's case, not a dead heater.
+	if tOK && quiet && ts < set.TempC-0.7 && !ctl.comp.on && !c.humOnStuck && c.humSat.v < 0.3 {
 		if ctl.heatOn {
 			c.heatEffort += dt
 		}
@@ -653,18 +669,26 @@ func dewPoint(tC, rh float64) float64 {
 	return cc * g / (b - g)
 }
 
-// announce starts an alarm's signalling. If the contact is already signalling
-// something, it closes briefly and opens again, so a new alarm is always a visible
-// change. A new alarm always sounds, whatever has been silenced.
+// announce starts a new or escalated alarm's signalling. If the contact is already
+// signalling something, it closes briefly and opens again, so a new alarm is always
+// a visible change. The buzzer does not stop for that close: it must sound while a
+// critical alarm stands (integration defect 12). A new alarm always sounds,
+// whatever has been silenced.
 func (c *Core) announce(a *activeAlarm) {
-	a.callUntil = c.t + c.cfg.NotifySec
-	a.nextCall = c.t + c.cfg.RenotifySec
-	a.buzzUntil = c.t + c.cfg.NotifySec
-	a.nextBuzz = c.t + c.cfg.RenotifySec
+	c.realert(a)
 	if c.signalling {
 		c.al.edgeUntil = c.t + c.cfg.EdgeSec
 		c.al.edges++
 	}
+}
+
+// realert sounds an alarm that is already known again (an acknowledged one coming
+// back as a reminder). It is not news, so it makes no brief close of the contact.
+func (c *Core) realert(a *activeAlarm) {
+	a.callUntil = c.t + c.cfg.NotifySec
+	a.nextCall = c.t + c.cfg.RenotifySec
+	a.buzzUntil = c.t + c.cfg.NotifySec
+	a.nextBuzz = c.t + c.cfg.RenotifySec
 	c.al.silenced = false
 }
 
@@ -738,14 +762,14 @@ func (c *Core) buzzerCalling(a *activeAlarm) bool {
 		// An acknowledged critical still there sounds again after an hour.
 		if a.a.Acked && t-a.ackT >= c.cfg.AckRearmSec {
 			a.a.Acked = false
-			c.announce(a)
+			c.realert(a)
 		}
 		return !a.a.Acked
 	}
 	if a.a.Acked && t-a.ackT >= c.cfg.RenotifySec {
 		// An acknowledged warning still there is a reminder again after the re-notify time.
 		a.a.Acked = false
-		c.announce(a)
+		c.realert(a)
 	}
 	if a.a.Acked {
 		return false
@@ -760,6 +784,7 @@ func (c *Core) buzzerCalling(a *activeAlarm) bool {
 func (c *Core) updateBuzzer() {
 	if c.al.silenced && c.t-c.al.silenceT >= c.cfg.SilenceSec {
 		c.al.silenced = false
+		c.event(Event{Type: EvSilence, Msg: "silence ended"}) // both ends are on record
 	}
 	contact, buzz := false, false
 	for _, code := range c.al.order {
@@ -774,7 +799,7 @@ func (c *Core) updateBuzzer() {
 	c.signalling = contact
 	edge := c.t < c.al.edgeUntil
 	c.alarmOut = contact && !edge // true means the contact is open: signalling
-	c.buzzerOut = buzz && !edge && !c.al.silenced
+	c.buzzerOut = buzz && !c.al.silenced
 }
 
 func (c *Core) activeList() []api.Alarm {

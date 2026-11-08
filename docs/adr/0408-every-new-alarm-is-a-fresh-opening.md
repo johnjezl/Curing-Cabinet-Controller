@@ -26,3 +26,17 @@ standing warning (TEMP_LOW) closed the contact while the excursion continued, fo
   show as a close and reopen; a dialer must trigger on each open edge (ADR 0108 already requires it).
 - In a simulation the brief close lasts 15 real seconds, which is hours of simulated time at high speed; the opening
   count is the record to read.
+
+## Revision after the first re-test (defect 12)
+The re-test passed defect 3 and failed 12: the brief close also stopped the buzzer for 15 s during a standing critical
+alarm, and came for every alarm event including reminders; the buzzer stopped for 15 s after every restart; the
+restart-burst event called for 30 simulated minutes, over before the contact armed in a compressed run; a silence's end
+was not recorded, and the panel showed it silenced after it had ended; the opening count started again at every restart.
+- The buzzer no longer stops for the brief close, in core or in cured; only the contact makes the transition.
+- Only a new or escalated alarm makes a brief close. A reminder (an acknowledged alarm coming back) sounds again but is
+  not news, and makes none. cured makes no brief close on its first tick.
+- A system event (the restart burst) calls for 30 minutes of real time, the process's own time, in every mode.
+- The end of a silence is journalled, and cured's own silence ends at 30 minutes as core's does and is shown so at once.
+- The opening count is kept in /run/curing-cured/contact, so it survives restarts within a boot, and a process that dies
+  with the contact closed has that opening counted at the next start.
+- cured's system alarms are written to core's event journal (type "system"), so the record of a cure has them all.

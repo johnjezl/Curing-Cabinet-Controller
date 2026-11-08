@@ -198,12 +198,12 @@ type ProgramState struct {
 
 // State is everything that must survive a restart other than the journals.
 type State struct {
-	Version       int             `json:"version"`
-	Clean         bool            `json:"clean"` // set only by an orderly Close
-	BootCount     uint64          `json:"boot_count"`
+	Version   int    `json:"version"`
+	Clean     bool   `json:"clean"` // set only by an orderly Close
+	BootCount uint64 `json:"boot_count"`
 	// OSBootID is the operating system's boot ID at the last start. The same ID at
 	// the next start means only the process stopped, not the power (ADR 0409).
-	OSBootID string `json:"os_boot_id,omitempty"`
+	OSBootID      string          `json:"os_boot_id,omitempty"`
 	Manual        api.Setpoints   `json:"manual"`
 	Limits        api.Limits      `json:"limits"`
 	Cal           api.Calibration `json:"cal"`
@@ -321,6 +321,7 @@ const (
 	EvClear     = "clear"
 	EvAck       = "ack"
 	EvSilence   = "silence"
+	EvSystem    = "system" // an alarm of the host process, outside core, kept on the same record
 	EvCmd       = "command"
 	EvPhase     = "phase"
 	EvDefrost   = "defrost"

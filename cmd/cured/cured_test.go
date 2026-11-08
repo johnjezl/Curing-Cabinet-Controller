@@ -334,6 +334,7 @@ func TestNewAlarmIsAFreshOpeningWhileContactHeld(t *testing.T) {
 func TestRestartLoopIsAnEventNotALatch(t *testing.T) {
 	now := time.Unix(1000, 0)
 	s := newSysAlarms(func() time.Time { return now }, func() bool { return true }, func(string, ...any) {})
+	s.realNow = func() time.Time { return now }
 	s.RaiseEvent(CodeRestartLoop, api.SevCritical, "t", "a")
 	if !s.Calling() || !s.Sounding() {
 		t.Fatal("a fresh restart burst must call")

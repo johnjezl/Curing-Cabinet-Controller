@@ -121,7 +121,7 @@ type Core struct {
 	heatStuck, humOnStuck              bool
 	compRecent                         ema // compressor on-time over the last half hour or so
 	humSat                             ema // share of the last 20 min or so at saturation with the humidifier off
-	tRing                              [7]float64
+	tRing, dewRing                     [7]float64
 	tRingT                             float64
 	stuckClearT, humStuckClearT        float64
 	humSatSince, coolOffDew0           float64
@@ -1233,6 +1233,14 @@ func (c *Core) refDue() float64 {
 	return c.cfg.CalReminderIdleSec
 }
 
+// RecordSystem puts an alarm of the host process (cured's own, such as a burst of
+// restarts) on core's event journal, so the record of a cure has every alarm.
+func (c *Core) RecordSystem(code, sev, msg string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.event(Event{Type: EvSystem, Code: code, Sev: sev, Msg: msg})
+}
+
 // EdgeCount is how many brief closes of the contact core has started, one for each
 // alarm raised or escalated while the contact was already signalling. cured turns
 // each new one into its own brief close, so a new alarm is a fresh transition even
@@ -1556,7 +1564,7 @@ func (c *Core) do(cmd api.Command) error {
 	case api.CmdSilence:
 		c.al.silenced = true
 		c.al.silenceT = c.t
-		c.event(Event{Type: EvSilence})
+		c.event(Event{Type: EvSilence, Msg: fmt.Sprintf("silenced for %.0f s", c.cfg.SilenceSec)})
 		c.updateBuzzer()
 	case api.CmdSetLimits:
 		if cmd.Limits == nil {

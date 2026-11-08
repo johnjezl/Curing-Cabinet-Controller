@@ -86,6 +86,7 @@ type annunciator struct {
 	prevSys       map[string]bool
 	edgeUntil     time.Time
 	openings      uint64
+	persist       func(openings uint64, closed bool) // keeps the count across restarts
 
 	dropped atomic.Bool
 }
@@ -117,6 +118,9 @@ func (a *annunciator) tick(now time.Time, temp api.Quality, hold bool) {
 		a.armed = true
 	}
 	sysCall := a.sys.CallingCodes()
+	if a.prevSys == nil {
+		a.prevSys = sysCall // what calls at start is not news of this tick
+	}
 	newEdge := false
 	if a.coreEdges != nil {
 		if n := a.coreEdges(); n != a.lastCoreEdges {
@@ -134,12 +138,17 @@ func (a *annunciator) tick(now time.Time, temp api.Quality, hold bool) {
 	}
 	inEdge := now.Before(a.edgeUntil)
 	closed := a.armed && ((a.f.coreHealthy.Load() && len(sysCall) == 0) || inEdge)
-	buzz := (a.f.coreBuzzer.Load() || a.sys.Sounding()) && !inEdge
+	// The buzzer does not stop for the brief close: it sounds while a critical alarm
+	// stands (integration defect 12).
+	buzz := a.f.coreBuzzer.Load() || a.sys.Sounding()
 	if hold {
 		closed, buzz = false, true
 	}
 	if a.contactClosed && !closed {
 		a.openings++
+	}
+	if closed != a.contactClosed && a.persist != nil {
+		a.persist(a.openings, closed)
 	}
 	a.contactClosed, a.buzzerOn = closed, buzz
 	if a.lines == nil || hold {

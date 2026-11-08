@@ -33,6 +33,7 @@ const (
 	runDir       = "/run/curing-cured"
 	statusFile   = runDir + "/status.json"
 	startsFile   = runDir + "/starts"
+	contactFile  = runDir + "/contact" // opening count and last contact state, across restarts
 	simSock      = runDir + "/sim.sock"
 	realStateDir = "/var/lib/curing/core"
 	stopBound    = 45 * time.Second // outputs are off first; a slow card only delays the clean flag

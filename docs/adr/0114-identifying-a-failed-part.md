@@ -29,8 +29,13 @@ Option 3:
   the heater before disconnecting it, because a much warmer room can look the same on a weak cabinet.
 - **HUMID_STUCK_ON** (new, critical): humidity at saturation (97 %, or setpoint + 5) for most (60 %) of 20 min with the humidifier
   commanded off for 30 min and the coil shown working. It latches until humidity has been normal for 2 h.
-- **COOL_STUCK_ON** needs the dew point not rising (mist from a humidifier pushes it up) and is not raised by reheat
-  against a humidifier at saturation. **HEAT_NO_EFFECT** is not judged while dehumidifying.
+- **COOL_STUCK_ON** needs condensation: the dew point falling at least half as fast as the air (mist from a humidifier
+  pushes it up; a room turned cold cools the air far faster than its leak lowers the dew point). Its "heater suddenly
+  busy" form needs the air held within 1 °C of setpoint, as a working heater against a closed compressor relay holds it.
+  **HEAT_NO_EFFECT** is not judged against air saturated by mist.
+- **HUMID_STUCK_ON** also needs the dew point most of the way from the setpoint's toward saturation at setpoint, with the
+  air within 1.5 °C of setpoint: a cabinet gone cold saturates its air with the water it already had (the first re-test
+  found it raised for a heater stuck off in a cold room).
 - **Sensor suspicion** (ADR 0109, 0113) is not evaluated while any equipment fault alarm is active or was in the last 6 h.
   Its triggers are otherwise unchanged: removing the effort-only ones took detection of a reading drifting low at 1 °C/h
   from 5 h (true air +4.9 °C) to 21 h (+19 °C, the heater warming product to 35 °C), and that is the worse failure. Its

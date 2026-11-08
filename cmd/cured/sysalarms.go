@@ -27,7 +27,7 @@ const (
 
 const (
 	sysIDPrefix   = "sys-"
-	sysSilenceFor = time.Hour
+	sysSilenceFor = 30 * time.Minute // as core's silence
 	sysKeepHist   = 20
 	// sysEventCall is how long a past event calls, as core's events do (ADR 0108).
 	sysEventCall = 30 * time.Minute
@@ -47,17 +47,49 @@ type sysAlarms struct {
 	// event marks codes that report something that happened, not a standing fault.
 	// They call for sysEventCall or until acknowledged, and an acknowledgement clears
 	// them, so an old one never holds the contact for the rest of a cure (ADR 0408).
-	event map[string]bool
+	// The call is timed in real time: these are events of the process, and in a
+	// simulation half an hour of simulated time passes before the contact even arms.
+	event     map[string]bool
+	eventReal map[string]time.Time
+	realNow   func() time.Time // time.Now; a test may replace it
+	// record puts raises and clears on core's journal once core exists; until then
+	// they wait in pending.
+	record  func(code, sev, msg string)
+	pending [][3]string
+}
+
+// SetRecord connects the journal and writes what waited for it.
+func (s *sysAlarms) SetRecord(f func(code, sev, msg string)) {
+	s.mu.Lock()
+	p := s.pending
+	s.record, s.pending = f, nil
+	s.mu.Unlock()
+	for _, x := range p {
+		f(x[0], x[1], x[2])
+	}
+}
+
+// note records a raise or clear. Caller holds mu.
+func (s *sysAlarms) note(code, sev, msg string) {
+	if s.record != nil {
+		f := s.record
+		go f(code, sev, msg) // core's lock must not be taken under this one
+		return
+	}
+	s.pending = append(s.pending, [3]string{code, sev, msg})
 }
 
 func newSysAlarms(now func() time.Time, wallOK func() bool, logf func(string, ...any)) *sysAlarms {
-	return &sysAlarms{now: now, wallOK: wallOK, active: map[string]*api.Alarm{}, logf: logf, event: map[string]bool{}}
+	return &sysAlarms{now: now, wallOK: wallOK, active: map[string]*api.Alarm{}, logf: logf, event: map[string]bool{}, eventReal: map[string]time.Time{}, realNow: time.Now}
 }
 
 // RaiseEvent is Raise for something that happened, such as a burst of restarts.
 func (s *sysAlarms) RaiseEvent(code string, sev api.Severity, title, action string) {
 	s.mu.Lock()
 	s.event[code] = true
+	if _, up := s.active[code]; !up {
+		s.eventReal[code] = s.realNow()
+	}
 	s.mu.Unlock()
 	s.Raise(code, sev, title, action)
 }
@@ -68,7 +100,7 @@ func (s *sysAlarms) calls(a *api.Alarm) bool {
 		return false
 	}
 	if s.event[a.Code] {
-		return !a.Acked && s.now().Sub(a.Since) < sysEventCall
+		return !a.Acked && s.realNow().Sub(s.eventReal[a.Code]) < sysEventCall
 	}
 	return true
 }
@@ -99,6 +131,7 @@ func (s *sysAlarms) Raise(code string, sev api.Severity, title, action string) {
 		Title: title, Action: action, Since: s.now(), ClockOK: s.wallOK()}
 	s.silenced = false // something new must be heard
 	s.logf("<2>cured: system alarm raised %s: %s", code, title)
+	s.note(code, string(sev), "raised: "+title)
 }
 
 // Clear ends the condition.
@@ -111,6 +144,8 @@ func (s *sysAlarms) Clear(code string) {
 	}
 	delete(s.active, code)
 	delete(s.event, code)
+	delete(s.eventReal, code)
+	s.note(code, string(a.Severity), "cleared")
 	c := *a
 	c.Cleared = s.now()
 	s.hist = append([]api.Alarm{c}, s.hist...)
@@ -156,6 +191,9 @@ func (s *sysAlarms) Sounding() bool {
 func (s *sysAlarms) Silenced() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.silenced && s.now().Sub(s.silenceAt) >= sysSilenceFor {
+		s.silenced = false
+	}
 	return s.silenced && len(s.active) > 0
 }
 

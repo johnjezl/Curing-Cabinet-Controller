@@ -26,6 +26,11 @@ func TestEachFailedPartIsNamedAndNoneAccusedFalsely(t *testing.T) {
 		{"humidifier stuck at 24", 24, 90, func(r *sim.Run) { r.Plant.Inject(sim.DevHumid, sim.FaultRelayStuckOn, 0) }, "HUMID_STUCK_ON", 120},
 		{"compressor does not cool", 13, 76, func(r *sim.Run) { r.Plant.Inject(sim.DevCompressor, sim.FaultNoCool, 0) }, "COOL_NO_EFFECT", 90},
 		{"room 12 warmer", 13, 76, func(r *sim.Run) { r.Plant.AmbientOffset = 12 }, "", 0},
+		// A cabinet gone cold saturates its air too; that is not a humidifier.
+		{"heater stuck off in a cold room", 13, 76, func(r *sim.Run) {
+			r.Plant.AmbientOffset = -10
+			r.Plant.Inject(sim.DevHeat, sim.FaultRelayStuckOff, 0)
+		}, "HEAT_NO_EFFECT", 720},
 		{"room 10 colder", 13, 76, func(r *sim.Run) { r.Plant.AmbientOffset = -10 }, "", 0},
 		{"recovering after a compressor repair in a hot room", 13, 76, func(r *sim.Run) {
 			r.Plant.AmbientOffset = 12
