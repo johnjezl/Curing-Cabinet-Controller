@@ -44,3 +44,12 @@ returns an error naming the right device (`climate drift` says to use `temp` or 
 use `climate`), and `Plant.Inject` records nothing it does not model, so the fault list never shows an
 injection with no effect. `climate stuck` is now modelled: the chip answers on time with the last frame it
 delivered, on both readings. `TestDriftAndStuckChangeTheReading` and `TestNoOpInjectionsAreRefused` hold this.
+
+Second amendment, after the re-test: the tool still accepted injections that did nothing or did the wrong thing: a drift,
+offset or spike of 0 or with no value, `stuck 5` (the 5 was ignored), NaN or 1e9 as a rate, and `dehumid relay-stuck-on`
+on a plant with no dehumidifier. `Plant.CheckInjection` now also checks the value against what the fault means: drift
+(non-zero, at most 50 units per virtual hour), offset (non-zero, at most 100), spike (a share above 0 and at most 1),
+range (a value), stuck (none; the door switch takes 0 or 1), everything else none; and refuses a dehumidifier or door
+switch fault on a plant without one. Refusals name the device and fault and say what would work. The reply names what
+was injected, and what it replaced (one fault per device); a repair says what it repaired, or that there was nothing.
+`TestInjectionParametersMustMeanSomething` holds this.

@@ -2,6 +2,7 @@ package sim
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/johnjezl/curing-cabinet-controller/internal/hal"
@@ -235,6 +236,49 @@ func TestNoOpInjectionsAreRefused(t *testing.T) {
 			if CheckFault(d, k) != nil {
 				t.Errorf("device %d fault %d refused", d, k)
 			}
+		}
+	}
+}
+
+// The re-test of defect 5: zero or missing values, ignored values, non-numbers and a
+// dehumidifier fault on a plant with none were accepted and changed nothing.
+func TestInjectionParametersMustMeanSomething(t *testing.T) {
+	pl := NewPlant(BasePlant())
+	nan := math.NaN()
+	for _, c := range []struct {
+		d     Device
+		k     FaultKind
+		p     float64
+		has   bool
+		works bool
+	}{
+		{DevTemp, FaultDrift, -0.5, true, true},
+		{DevTemp, FaultDrift, 0, true, false},
+		{DevTemp, FaultDrift, 0, false, false},
+		{DevTemp, FaultDrift, nan, true, false},
+		{DevTemp, FaultDrift, math.Inf(1), true, false},
+		{DevTemp, FaultDrift, 1e9, true, false},
+		{DevTemp, FaultSpike, 0, false, false},
+		{DevTemp, FaultSpike, 0.2, true, true},
+		{DevRH, FaultOffset, 0, true, false},
+		{DevScale, FaultOffset, 100, true, true},
+		{DevTemp, FaultStuck, 5, true, false},
+		{DevTemp, FaultStuck, 0, false, true},
+		{DevClimate, FaultStuck, 0, false, true},
+		{DevDoorSwitch, FaultStuck, 1, true, true},
+		{DevDoorSwitch, FaultStuck, 0, false, false},
+		{DevHeat, FaultRelayStuckOn, 0, false, true},
+		{DevHeat, FaultRelayStuckOn, 1, true, false},
+		{DevDehumid, FaultRelayStuckOn, 0, false, false}, // the base plant has no dehumidifier
+		{DevTemp, FaultRange, 85, true, true},
+		{DevTemp, FaultRange, 0, false, false},
+	} {
+		err := pl.CheckInjection(c.d, c.k, c.p, c.has)
+		if (err == nil) != c.works {
+			t.Errorf("%s %s %v (given %v): err %v, want accepted=%v", c.d, c.k, c.p, c.has, err, c.works)
+		}
+		if err != nil && strings.Contains(err.Error(), "device-") {
+			t.Errorf("refusal names a number, not the device: %v", err)
 		}
 	}
 }

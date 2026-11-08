@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,6 +91,77 @@ var implemented = map[Device][]FaultKind{
 	DevOutputs:    {FaultWriteErr},
 }
 
+var deviceName = map[Device]string{
+	DevClimate: "climate", DevTemp: "temp", DevRH: "rh", DevAir: "air", DevScale: "scale", DevFan: "fan",
+	DevTach: "tach", DevDuct: "duct", DevCool: "cool", DevHeat: "heat", DevHumid: "humid", DevDehumid: "dehumid",
+	DevCompressor: "compressor", DevHumidifier: "humidifier", DevDoorSwitch: "door-switch", DevOutputs: "outputs",
+}
+
+var faultName = map[FaultKind]string{
+	FaultNone: "none", FaultDead: "dead", FaultBadRead: "bad-read", FaultStuck: "stuck", FaultSpike: "spike",
+	FaultDrift: "drift", FaultOffset: "offset", FaultRange: "range", FaultRelayStuckOn: "relay-stuck-on",
+	FaultRelayStuckOff: "relay-stuck-off", FaultStall: "stall", FaultBlocked: "blocked", FaultNoCool: "no-cool",
+	FaultEmpty: "empty", FaultWriteErr: "write-err",
+}
+
+func (d Device) String() string {
+	if n, ok := deviceName[d]; ok {
+		return n
+	}
+	return fmt.Sprintf("device-%d", int(d))
+}
+
+func (k FaultKind) String() string {
+	if n, ok := faultName[k]; ok {
+		return n
+	}
+	return fmt.Sprintf("fault-%d", int(k))
+}
+
+// FaultOn is the fault currently injected into d.
+func (pl *Plant) FaultOn(d Device) FaultKind { return pl.Faults.kind(d) }
+
+// CheckInjection says whether injecting k into d with this parameter (hasParam false
+// when none was given) changes this plant in the way the fault describes. A zero
+// drift, a stuck value that would be ignored, a rate that is not a number, or a
+// dehumidifier fault on a plant with none would all be accepted and change nothing,
+// or change the wrong thing (integration defect 5, re-test).
+func (pl *Plant) CheckInjection(d Device, k FaultKind, param float64, hasParam bool) error {
+	if err := CheckFault(d, k); err != nil {
+		return err
+	}
+	if hasParam && (math.IsNaN(param) || math.IsInf(param, 0)) {
+		return fmt.Errorf("%s %s: the value must be a number", d, k)
+	}
+	need := func(what string, ok bool) error {
+		if !hasParam || !ok {
+			return fmt.Errorf("%s %s needs %s", d, k, what)
+		}
+		return nil
+	}
+	switch {
+	case k == FaultDrift:
+		return need("a non-zero rate in units per virtual hour, at most 50 either way (e.g. 'temp drift -0.5')", param != 0 && math.Abs(param) <= 50)
+	case k == FaultOffset:
+		return need("a non-zero offset, at most 100 either way (e.g. 'temp offset -2')", param != 0 && math.Abs(param) <= 100)
+	case k == FaultSpike:
+		return need("the share of samples that spike, above 0 and at most 1 (e.g. 'temp spike 0.2')", param > 0 && param <= 1)
+	case k == FaultRange:
+		return need("the impossible value the sensor will report (e.g. 'temp range 85')", true)
+	case k == FaultStuck && d == DevDoorSwitch:
+		return need("the state it sticks in, 0 (closed) or 1 (open)", param == 0 || param == 1)
+	case hasParam:
+		return fmt.Errorf("%s %s takes no value: %s", d, k, map[bool]string{true: "it freezes the reading it has now", false: "remove the number"}[k == FaultStuck])
+	}
+	if (d == DevDehumid) && pl.P.DehumidGPerS <= 0 {
+		return fmt.Errorf("%s %s: this plant has no dehumidifier, so the fault would change nothing", d, k)
+	}
+	if d == DevDoorSwitch && !pl.P.DoorSwitch {
+		return fmt.Errorf("%s %s: this plant has no door switch, so the fault would change nothing", d, k)
+	}
+	return nil
+}
+
 // CheckFault says whether injecting k into d changes anything. FaultNone (repair)
 // always does.
 func CheckFault(d Device, k FaultKind) error {
@@ -102,12 +174,18 @@ func CheckFault(d Device, k FaultKind) error {
 		}
 	}
 	switch {
+	case k == FaultNone:
+		return nil
 	case d == DevClimate && (k == FaultDrift || k == FaultOffset || k == FaultSpike || k == FaultRange):
 		return errors.New("the climate chip has two readings: inject this on temp or rh")
 	case (d == DevTemp || d == DevRH) && (k == FaultDead || k == FaultBadRead):
 		return errors.New("temperature and humidity come from one chip: inject this on climate")
 	}
-	return fmt.Errorf("device %d does not model fault %d; the injection would change nothing", d, k)
+	var can []string
+	for _, ok := range implemented[d] {
+		can = append(can, ok.String())
+	}
+	return fmt.Errorf("%s does not model %s, so the injection would change nothing; it models: %s", d, k, strings.Join(can, ", "))
 }
 
 // Inject sets a fault at the plant's current time. Use FaultNone to repair. A

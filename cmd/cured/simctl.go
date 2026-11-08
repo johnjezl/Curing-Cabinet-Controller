@@ -142,10 +142,10 @@ func (s *simState) handle(a []string) (any, error) {
 		if !okD || !okK {
 			return nil, fmt.Errorf("unknown device %q or fault %q", a[0], a[1])
 		}
-		if err := sim.CheckFault(d, k); err != nil {
-			return nil, fmt.Errorf("%s %s refused: %v", a[0], a[1], err)
-		}
 		p := 0.0
+		if len(a) > 3 {
+			return nil, errors.New("fault <device> <kind> [value]: one value at most")
+		}
 		if len(a) > 2 {
 			v, err := argFloat(a, 2)
 			if err != nil {
@@ -153,7 +153,17 @@ func (s *simState) handle(a []string) (any, error) {
 			}
 			p = v
 		}
-		return ok, s.onPlant(func() { s.pl.Inject(d, k, p) })
+		if err := s.pl.CheckInjection(d, k, p, len(a) > 2); err != nil {
+			return nil, fmt.Errorf("refused: %v", err)
+		}
+		reply := map[string]any{"ok": true, "injected": d.String() + ":" + k.String()}
+		err := s.onPlant(func() {
+			if prev := s.pl.FaultOn(d); prev != sim.FaultNone && prev != k {
+				reply["replaced"] = d.String() + ":" + prev.String() // one fault per device
+			}
+			s.pl.Inject(d, k, p)
+		})
+		return reply, err
 	case "repair":
 		if len(a) != 1 {
 			return nil, errors.New("repair <device>|all")
@@ -169,7 +179,16 @@ func (s *simState) handle(a []string) (any, error) {
 		if !okD {
 			return nil, fmt.Errorf("unknown device %q", a[0])
 		}
-		return ok, s.onPlant(func() { s.pl.Inject(d, sim.FaultNone, 0) })
+		reply := map[string]any{"ok": true}
+		err := s.onPlant(func() {
+			if prev := s.pl.FaultOn(d); prev == sim.FaultNone {
+				reply["note"] = "no fault was injected on " + d.String()
+			} else {
+				reply["repaired"] = d.String() + ":" + prev.String()
+			}
+			s.pl.Inject(d, sim.FaultNone, 0)
+		})
+		return reply, err
 	case "start":
 		if len(a) != 1 {
 			return nil, errors.New("start <recipe id>")
