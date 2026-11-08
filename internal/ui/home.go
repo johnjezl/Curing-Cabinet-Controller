@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"image"
 	"image/color"
 	"strings"
@@ -56,8 +57,10 @@ func (p *Panel) drawHome(c *Canvas, st Status) {
 		tSet = "OVERRIDE " + fmtFloat(s.Setpoint.TempC, 1) + " °C"
 		rSet = "OVERRIDE " + fmtFloat(s.Setpoint.RHPct, 0) + " %"
 	}
-	tDev := bandDelta(s.Temp, s.Setpoint.TempC, s.Limits.TempHighDelta, s.Limits.TempLowDelta, 1, false)
-	rDev := bandDelta(s.RH, s.Setpoint.RHPct, s.Limits.RHHighDelta, s.Limits.RHLowDelta, 0, false)
+	// Colour starts at the regulation band, not the alarm band: a reading 8 % off
+	// setpoint is not "in range" because no alarm is due yet (integration defect 7).
+	tDev := bandDelta(s.Temp, s.Setpoint.TempC, regBand(s.Limits.TempHighDelta, regBandT), regBand(s.Limits.TempLowDelta, regBandT), 1, false)
+	rDev := bandDelta(s.RH, s.Setpoint.RHPct, regBand(s.Limits.RHHighDelta, regBandRH), regBand(s.Limits.RHLowDelta, regBandRH), 0, false)
 	tileW := (mR - mX - 4) / 2
 	tR := rect(mX, aTop, mX+tileW, aBot)
 	rR := rect(mX+tileW+4, aTop, mR, aBot)
@@ -87,8 +90,27 @@ func (p *Panel) drawHome(c *Canvas, st Status) {
 	p.drawOutputs(c, rect(mX, cTop, mR, cBot), holds)
 }
 
+// The band the controller holds: about ±1 °C and ±5 %RH. A reading outside it is
+// shown in colour even before an alarm is due.
+const regBandT, regBandRH = 1.0, 5.0
+
+// regBand is the narrower of an alarm limit and the regulation band.
+func regBand(limit, band float64) float64 {
+	if limit > 0 && limit < band {
+		return limit
+	}
+	return band
+}
+
+// inRegBand says both readings are good and within the regulation band.
+func inRegBand(s *api.Snapshot) bool {
+	return readingGood(s.Temp) && readingGood(s.RH) &&
+		math.Abs(s.Temp.Value-s.Setpoint.TempC) <= regBand(s.Limits.TempHighDelta, regBandT) &&
+		math.Abs(s.RH.Value-s.Setpoint.RHPct) <= regBand(s.Limits.RHHighDelta, regBandRH)
+}
+
 // bandDelta returns the signed distance from setpoint text when outside the
-// alarm band, else "". A reading that is not good returns nothing: it has its
+// given band, else "". A reading that is not good returns nothing: it has its
 // own treatment.
 func bandDelta(r api.Reading, set, hi, lo float64, dec int, _ bool) string {
 	if !readingGood(r) {

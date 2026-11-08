@@ -1247,11 +1247,16 @@ func (c *Core) outputStatus() []api.OutputStatus {
 		cool = st(co, false, "fault", "temperature data is bad; between blind runs")
 	case ctl.coolWant:
 		cool = st(co, false, "hold", "starting")
-	case c.tS.v > set.TempC:
-		cool = st(co, false, "normal", fmt.Sprintf("%.1f °C over setpoint: building up demand for the next run", c.tS.v-set.TempC))
+	case c.tF.v > set.TempC:
+		// The error stated is the one on the panel (the fast reading); the loop acts on
+		// a slower average, which is why a run may not have started yet.
+		cool = st(co, false, "normal", fmt.Sprintf("%.1f °C over setpoint: building up demand for the next run", c.tF.v-set.TempC))
 	default:
 		cool = st(co, false, "normal", "at or under setpoint")
 	}
+	// The fan stops on purpose for a while after a defrost (ADR 0103): no airflow is
+	// proven then, and that is a hold, not a fault.
+	fanStopped := ctl.defrostEnd != 0 && t < ctl.defrostEnd+c.cfg.FanDelay+20
 	var heat api.OutputStatus
 	const he = "heat"
 	switch {
@@ -1265,18 +1270,22 @@ func (c *Core) outputStatus() []api.OutputStatus {
 		heat = st(he, false, "fault", "locked off: temperature data is bad")
 	case door:
 		heat = st(he, false, "hold", "door open")
+	case !ctl.airflowProven && fanStopped:
+		heat = st(he, false, "hold", "off while the fan is stopped after defrost")
 	case !ctl.airflowProven:
 		heat = st(he, false, "fault", "locked off: no airflow proven")
 	case c.st.TDoubtUntil != 0 || c.st.RHDoubtUntil != 0:
 		heat = st(he, false, "hold", "locked off while a reading is in doubt: only cooling is allowed")
 	case t-c.bootT <= 30:
 		heat = st(he, false, "hold", "settling after power-on")
-	case c.tS.v >= set.TempC:
+	case c.tF.v >= set.TempC:
 		heat = st(he, false, "normal", "at or over setpoint")
 	case ctl.heatDemand > 0:
-		heat = st(he, false, "normal", fmt.Sprintf("%.1f °C under setpoint: on %.0f %% of each minute, off between pulses", set.TempC-c.tS.v, 100*ctl.heatDemand))
+		heat = st(he, false, "normal", fmt.Sprintf("%.1f °C under setpoint: on %.0f %% of each minute, off between pulses", set.TempC-c.tF.v, 100*ctl.heatDemand))
+	case ctl.tI > 0:
+		heat = st(he, false, "normal", fmt.Sprintf("%.1f °C under setpoint: this cabinet needs cooling overall, so the room brings it back", set.TempC-c.tF.v))
 	default:
-		heat = st(he, false, "normal", fmt.Sprintf("%.1f °C under setpoint: this cabinet needs cooling overall, so the room brings it back", set.TempC-c.tS.v))
+		heat = st(he, false, "normal", fmt.Sprintf("%.1f °C under setpoint: the average of the last few minutes needs no heat yet", set.TempC-c.tF.v))
 	}
 	var hum api.OutputStatus
 	const hu = "humid"
@@ -1285,20 +1294,26 @@ func (c *Core) outputStatus() []api.OutputStatus {
 		hum = st(hu, true, "normal", "adding moisture")
 	case !tOK || !rhOK:
 		hum = st(hu, false, "fault", "locked off: temperature or humidity data is bad")
+	case ctl.defrost || t < ctl.dripUntil || fanStopped:
+		hum = st(hu, false, "hold", "defrost")
 	case !ctl.airflowProven:
 		hum = st(hu, false, "fault", "locked off: no airflow proven")
-	case ctl.defrost || t < ctl.dripUntil:
-		hum = st(hu, false, "hold", "defrost")
 	case door:
 		hum = st(hu, false, "hold", "door open")
 	case t-c.bootT <= 300:
 		hum = st(hu, false, "hold", "settling after power-on")
-	case c.rhS.v >= set.RHPct:
+	case c.st.TDoubtUntil != 0 || c.st.RHDoubtUntil != 0:
+		hum = st(hu, false, "hold", "locked off while a reading is in doubt")
+	case c.rhF.v >= set.RHPct && ctl.dehum:
+		hum = st(hu, false, "normal", fmt.Sprintf("%.0f %% over setpoint: the compressor is removing moisture", c.rhF.v-set.RHPct))
+	case c.rhF.v >= set.RHPct:
 		hum = st(hu, false, "normal", "at or over setpoint")
 	case t < ctl.humNext:
-		hum = st(hu, false, "normal", "waiting to see the last pulse settle")
+		hum = st(hu, false, "normal", fmt.Sprintf("%.0f %% under setpoint: waiting to see the last pulse settle", set.RHPct-c.rhF.v))
+	case ctl.comp.on || (ctl.comp.hasStop && t-ctl.comp.lastStop < 600):
+		hum = st(hu, false, "normal", fmt.Sprintf("%.0f %% under setpoint after a compressor run: it comes back as the coil warms", set.RHPct-c.rhF.v))
 	default:
-		hum = st(hu, false, "normal", "under setpoint, within the band left for compressor cycling")
+		hum = st(hu, false, "normal", fmt.Sprintf("%.0f %% under setpoint: the average of the last few minutes needs no pulse yet", set.RHPct-c.rhF.v))
 	}
 	// What the cabinet's response proves overrides what was commanded.
 	if c.al.active[CodeCoolStuck] != nil {

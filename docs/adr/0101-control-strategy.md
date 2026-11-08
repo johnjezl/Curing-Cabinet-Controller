@@ -96,3 +96,9 @@ setpoint except where its sensor bias (±1 °C in the sweep) now shows, because 
   on the heater (docs/wiring.md already asks for one).
 - A frozen temperature reading is now caught after about 22 min at a 24 °C ferment, by 6 min of heater actuation with no
   change, where the old heater, which never ran there, left only the 2 h idle limit.
+- Output reasons (ADR 0311) now state the error of the reading on the panel. The first re-test found the heater's
+  reason quoting the loop's 3-minute average, which disagreed with the screen by up to 1.1 °C and sometimes in sign.
+- The humidity swing above is what remains of defect 7 after its first re-test: on the bench's full no-fault cure the
+  true RH was within ±5 % in 73 to 86 % of samples per phase, every hourly mean inside. The humidifier ran 1.5 % of the
+  time in Ferment, so capacity is not the limit; each compressor run dries the cabinet's small volume of air by several
+  percent, and runs are already as short and as far apart as the protection timers allow.

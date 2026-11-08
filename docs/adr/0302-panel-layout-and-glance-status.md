@@ -31,3 +31,11 @@ valid data is hatched and never bridged by a line.
 ## Consequences
 Airflow and weight are 6 mm digits, not readable from as far away. Space for holds
 comes from those tiles: in the tightest state (alarm plus hold) they are 4 mm.
+
+## Amendment after the integration critic (defects 2 and 7)
+A reading's deviation colour started at the alarm band (2.5 °C, 10 %RH), so humidity 8 or 9 % over setpoint showed
+white under "OK: NO ALARMS, IN RANGE". Colour now starts at the regulation band, about ±1 °C and ±5 %RH (or the alarm
+band if that is narrower), and "IN RANGE" is shown only when both readings are inside it; otherwise the green line reads
+"OK: NO ALARMS". The amber "no alarm yet" headline still waits for the alarm band, so a compressor run's normal humidity
+swing colours the digits but does not take the headline. The output reasons state the error of the number on the panel,
+not of the slower average the loop acts on, and say what the output is doing about it (ADR 0101).

@@ -131,7 +131,10 @@ func cabinetStatus(s *api.Snapshot, stalled bool, stallFor time.Duration) Status
 		}
 		return Status{Level: LevelOK, Headline: "DEFROSTING: TEMP MAY RISE BRIEFLY"}
 	}
-	return Status{Level: LevelOK, Headline: "OK: NO ALARMS, IN RANGE"}
+	if inRegBand(s) {
+		return Status{Level: LevelOK, Headline: "OK: NO ALARMS, IN RANGE"}
+	}
+	return Status{Level: LevelOK, Headline: "OK: NO ALARMS"}
 }
 
 // blindAfter is how long a temperature or humidity reading may be unusable with no
