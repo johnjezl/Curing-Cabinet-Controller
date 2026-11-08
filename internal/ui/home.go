@@ -27,10 +27,10 @@ func (p *Panel) drawHome(c *Canvas, st Status) {
 	switch {
 	case big && off > 0:
 		p.drawBigBanner(c, st, off, 98)
-		aTop, aBot, digit = 152, 279, 80
+		aTop, aBot, digit = 178, 279, 54
 		bTop, bBot, cTop, cBot, medDigit = 282, 347, 350, 382, 30
 		if holds {
-			aBot, digit = 262, 62
+			aBot, digit = 262, 38
 			bTop, bBot, cTop, medDigit = 265, 318, 321, 20
 		}
 	case big:
@@ -42,8 +42,8 @@ func (p *Panel) drawHome(c *Canvas, st Status) {
 		}
 	case off > 0:
 		p.drawHeaderIn(c, st, "", rect(mX, headTop+off, mR, headBot+off))
-		aTop, aBot, digit = 104, 251, 104
-		bTop, bBot, cTop, cBot, medDigit = 255, 315, 319, 382, 30
+		aTop, aBot, digit = 130, 255, 80
+		bTop, bBot, cTop, cBot, medDigit = 258, 315, 319, 382, 24
 	default:
 		p.drawHeader(c, st, "")
 		aTop, aBot, digit = 60, 222, 118
@@ -133,7 +133,11 @@ func (p *Panel) drawBigBanner(c *Canvas, st Status, off, height int) {
 			c.Round(b, 6, colBG)
 			c.Wrap(b.Inset(6), "BUZZER SILENCED", Style{Font: FontBold, Size: 22, Color: colText, H: Center, MinSize: 16}, 2)
 		} else {
-			p.button(c, b, "home.silence", "SILENCE BUZZER", btnStyle{colText, colBlack, 23}, func() {
+			label := "SILENCE BUZZER"
+			if s.Health.Simulated {
+				label = "SILENCE SIM BUZZER"
+			}
+			p.button(c, b, "home.silence", label, btnStyle{colText, colBlack, 23}, func() {
 				p.command(api.Command{Kind: api.CmdSilence}, "Buzzer silenced. The alarm stays on screen.")
 			})
 		}
@@ -238,10 +242,16 @@ func (p *Panel) bigTile(c *Canvas, r image.Rectangle, label, sub string, rd api.
 	}
 	numR := rect(v.Min.X, v.Min.Y, v.Max.X-78, v.Max.Y)
 	ink := c.Digits(numR, fmtFloat(rd.Value, dec), digit, col, Right, id)
-	uR := rect(ink.Max.X+8, ink.Min.Y-2, v.Max.X, ink.Min.Y+40)
-	c.Text(uR, unit, Style{Font: FontBold, Size: 36, Color: col, V: Top, MinSize: 24})
+	// Unit and deviation share the column right of the digits; with the smaller
+	// digits of a simulation (ADR 0406) they shrink with them so they do not overlap.
+	uSize, dSize := 36, 30
+	if h := ink.Dy(); h < 90 {
+		uSize, dSize = max(16, h*36/90), max(14, h*30/90)
+	}
+	uR := rect(ink.Max.X+8, ink.Min.Y-2, v.Max.X, ink.Min.Y+uSize+4)
+	c.Text(uR, unit, Style{Font: FontBold, Size: uSize, Color: col, V: Top, MinSize: 12})
 	if dev != "" {
-		c.Text(rect(ink.Max.X+2, ink.Max.Y-40, v.Max.X, ink.Max.Y+2), dev, Style{Font: FontBold, Size: 30, Color: devCol, H: Center, MinSize: 18})
+		c.Text(rect(ink.Max.X+2, ink.Max.Y-dSize-10, v.Max.X, ink.Max.Y+2), dev, Style{Font: FontBold, Size: dSize, Color: devCol, H: Center, MinSize: 12})
 	}
 }
 

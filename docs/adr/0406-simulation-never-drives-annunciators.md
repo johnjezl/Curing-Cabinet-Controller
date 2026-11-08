@@ -3,7 +3,8 @@
 Status: accepted. Supersedes the `--sim-annunciate` part of ADR 0402. Fixes integration defect 10.
 Revised after its first re-test: the band's 14 px lettering could not be read at 2 m, the stopped screen of a
 simulation was unmarked, simulated alarms read like real ones, and the status file reported the simulated contact
-under the real contact's name.
+under the real contact's name. Revised again after the second re-test: 23 px capitals are 5.3 arcmin at 2 m, the
+limit of normal vision with no margin, and two headlines and the silence button were unmarked.
 
 ## Context
 The integration critic ran a compressed cure on the rig in simulation. With `--sim-annunciate` the
@@ -28,9 +29,10 @@ and buzzer, so the panel and the status file show them, and the status file says
 `annunciator_lines_driven: false`. In real mode it says `true`.
 
 Panel: the home screen, the across-the-room view, starts with a full-width purple band reading
-"SIMULATION ×N · NOT A REAL CABINET" in 32 px capitals (about 3.1 mm, over 5 arcmin at 2 m). The clock sits
-inside the purple simulation pill on every screen ("SIMULATED ×N 18:13:12"), because it shows simulated time.
-Alarm headlines read "SIM ALARM:" and "SIM WARNING:", since their action text names real parts. The frozen and
+"SIMULATION ×N" in 72 px type: capitals of about 52 px, 7 mm, about 12 arcmin at 2 m, over twice what normal
+vision needs. The clock sits inside the purple simulation pill on every screen ("SIMULATED ×N 18:13:12"), because
+it shows simulated time. Every status headline starts "SIM" ("SIM OK: ...", "SIM ALARM: ..."), and the action text
+of an alarm starts "If real:", since it names real parts. The silence button reads SILENCE SIM BUZZER. The frozen and
 stopped notices of a simulation are purple, carry the band top and bottom, and say no cabinet was being controlled,
 instead of asking for a thermometer check. The hatched frame and the SIM tag on each value stay.
 
@@ -39,11 +41,12 @@ instead of asking for a thermometer check. The hatched frame and the SIM tag on 
   to the contact sees one open contact for the whole bench session, never a simulated alarm.
 - The healthy (energized) contact state is no longer reachable on a bench with no plant. It is reached
   only by real mode with working sensors, which docs/wiring.md lists as not yet done.
-- The band costs 44 px. Without an alarm banner the temperature and humidity digits keep their 104 px; with a
-  banner they are 80 px in simulation, and 62 px with an output hold showing too. That is under the 14 mm reference,
-  on purpose: a simulation should not read like a real cabinet from across the room. Real mode is unchanged.
-- The status file's `alarm_contact_closed` and `buzzer_on` always describe the real lines. In a simulation they are
-  false (the guard holds both off), and the simulated decision is in `simulated_contact_closed` and
+- The band costs 70 px. In a simulation the temperature and humidity digits are 80 px with no banner, 54 px with an
+  alarm banner and 38 px with a banner and an output hold, all under the 14 mm reference, on purpose: from across the
+  room the largest thing on a simulation's panel is the word SIMULATION. Real mode is unchanged.
+- The status file's `alarm_armed`, `alarm_contact_closed` and `buzzer_on` always describe the real lines. In a
+  simulation nothing arms or closes the contact (false), the buzzer line is low (`buzzer_on` true, ADR 0407), and
+  `real_lines` says why; the simulated decision is in `simulated_alarm_armed`, `simulated_contact_closed` and
   `simulated_buzzer_on`.
 - `cured post-stop` accepts no argument or `--sim`, and refuses anything else.
 - `deploy/local-rig.sh` runs the same binary on a development machine when the rig cannot be reached.

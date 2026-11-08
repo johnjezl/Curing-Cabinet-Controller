@@ -282,24 +282,25 @@ func (p *Panel) drawSimPill(c *Canvas, x int, r image.Rectangle, compact bool) i
 }
 
 // simBandH is the height the home screen gives the simulation band, gap included.
-// The lettering must be legible at 2 m: 32 px type has capitals of about 23 px
-// (3.1 mm, over 5 arcmin at 2 m on this panel).
-const simBandH = 44
+// The word must be readable at 2 m, not merely visible: 72 px type has capitals of
+// about 52 px (7 mm, about 12 arcmin at 2 m on this panel), over twice the 5 arcmin
+// limit of normal vision.
+const simBandH = 70
 
 // drawSimBand is the full-width simulation marker at the top of the home screen.
-// The hatched ends match the frame; the words say what is and is not real.
+// The hatched ends match the frame.
 func (p *Panel) drawSimBand(c *Canvas, r image.Rectangle) {
 	label := "SIMULATION"
 	if f := p.snap.Health.SpeedFactor; finite(f) && f > 1 {
 		label += fmt.Sprintf(" ×%.0f", f)
 	}
-	drawSimBandText(c, r, label+" · NOT A REAL CABINET")
+	drawSimBandText(c, r, label, 72)
 }
 
-func drawSimBandText(c *Canvas, r image.Rectangle, label string) {
+func drawSimBandText(c *Canvas, r image.Rectangle, label string, size int) {
 	c.Fill(r, colSim)
-	st := Style{Font: FontBold, Size: 32, Color: colText, H: Center, MinSize: 22}
-	w := getFace(FontBold, 32).measure(label) + 24
+	st := Style{Font: FontBold, Size: size, Color: colText, H: Center, MinSize: size * 3 / 4}
+	w := getFace(FontBold, size).measure(label) + 24
 	if w > r.Dx()-24 {
 		w = r.Dx() - 24
 	}

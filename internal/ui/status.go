@@ -66,8 +66,21 @@ func readings(s *api.Snapshot) []namedReading {
 }
 
 // computeStatus is pure: same snapshot, same answer. The word "safe" never
-// appears: the panel reports the cabinet, not the product.
+// appears: the panel reports the cabinet, not the product. In a simulation every
+// headline says so, and an instruction is marked "If real:", what to do in a real cabinet,
+// because it names real parts (ADR 0406).
 func computeStatus(s *api.Snapshot, stalled bool, stallFor time.Duration) Status {
+	st := cabinetStatus(s, stalled, stallFor)
+	if s.Health.Simulated {
+		st.Headline = "SIM " + st.Headline
+		if st.Detail != "" && (st.Alarm != nil || stalled) {
+			st.Detail = "If real: " + st.Detail
+		}
+	}
+	return st
+}
+
+func cabinetStatus(s *api.Snapshot, stalled bool, stallFor time.Duration) Status {
 	if stalled {
 		return Status{Level: LevelCrit, Headline: "CONTROLLER NOT RESPONDING",
 			Detail: fmt.Sprintf("No fresh data for %s. Values shown are not live. Check the cabinet with a separate thermometer and check power.", fmtDur(stallFor)),
@@ -80,20 +93,13 @@ func computeStatus(s *api.Snapshot, stalled bool, stallFor time.Duration) Status
 		if a.Code == codeCureFinished {
 			st.Screen = scrCure // the screen that holds the verify text and the way to end
 		}
-		sim := ""
-		if s.Health.Simulated {
-			sim = "SIM " // the action text names real parts; this says none are involved
-		}
 		switch a.Severity {
 		case api.SevCritical:
-			st.Level, st.Headline = LevelCrit, sim+"ALARM: "+st.Headline
+			st.Level, st.Headline = LevelCrit, "ALARM: "+st.Headline
 		case api.SevWarning:
-			st.Level, st.Headline = LevelWarn, sim+"WARNING: "+st.Headline
+			st.Level, st.Headline = LevelWarn, "WARNING: "+st.Headline
 		default:
 			st.Level = LevelInfo
-			if sim != "" {
-				st.Headline = "SIM: " + st.Headline
-			}
 		}
 		return st
 	}

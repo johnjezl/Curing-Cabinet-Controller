@@ -25,8 +25,8 @@ func noticeFrame(title, line1, line2 string) *image.RGBA {
 func simNoticeFrame(title, line1 string) *image.RGBA {
 	c := NewCanvas()
 	c.Fill(c.Img.Bounds(), colSim)
-	for _, r := range []image.Rectangle{rect(0, 0, ScreenW, simBandH), rect(0, ScreenH-simBandH, ScreenW, ScreenH)} {
-		drawSimBandText(c, r, "SIMULATION · NOT A REAL CABINET")
+	for _, r := range []image.Rectangle{rect(0, 0, ScreenW, 44), rect(0, ScreenH-44, ScreenW, ScreenH)} {
+		drawSimBandText(c, r, "SIMULATION · NOT A REAL CABINET", 32)
 	}
 	c.Text(rect(24, 70, 776, 180), title, Style{Font: FontBold, Size: 68, Color: colText, H: Center, MinSize: 40})
 	c.Wrap(rect(40, 190, 760, 320), line1, Style{Font: FontBold, Size: 34, Color: colText, H: Center, MinSize: 22}, 3)

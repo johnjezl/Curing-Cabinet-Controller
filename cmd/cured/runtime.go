@@ -279,11 +279,12 @@ func (r *runtime) statusMap() map[string]any {
 		"first_frame_uptime": float64(r.upFirstFrm.Load()) / 1000, "control_ticks": r.ticks.Load(),
 		"control_last_tick_age_s": time.Since(time.Unix(0, r.lastTick.Load())).Seconds(), "frames": r.frames.Load(),
 		"last_frame_age_s": time.Since(time.Unix(0, r.lastFrame.Load())).Seconds(),
-		"alarm_armed": armed, "system_alarms": r.sys.Codes(), "annunciator_lines_driven": r.linesDriven,
+		"system_alarms": r.sys.Codes(), "annunciator_lines_driven": r.linesDriven,
 	}
 	if r.linesDriven {
-		m["alarm_contact_closed"], m["buzzer_on"] = closed, buzz
+		m["alarm_armed"], m["alarm_contact_closed"], m["buzzer_on"] = armed, closed, buzz
 	} else {
+		m["alarm_armed"], m["simulated_alarm_armed"] = false, armed
 		// No line follows the decision in a simulation: the guard holds every line off,
 		// so the real contact is open and a wired sounder sounds, both energize-to-run
 		// (ADR 0406, 0407). The simulated decision is reported under its own names.
