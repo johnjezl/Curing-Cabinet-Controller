@@ -133,3 +133,29 @@ After a repair COOL_STUCK_ON clears in 20 to 90 min and HUMID_STUCK_ON in 2.5 to
 Limit: a sudden 10 °C colder room with a dead heater also dries the air on the simulator's plant (its cold walls
 condense), so COOL_STUCK_ON still names the compressor on 2 to 14 of 36 weak plants in that case, as before this change.
 Nothing here measures the walls or the coil, which is what would tell them apart.
+
+## Second amendment in the next fix round (rig re-test)
+The rig re-test named every fault in time and held it until repair, with no false alarm in a hot room, and failed on:
+COOL_STUCK_ON raised 24 times in 6 h in a room 10 °C colder at 13 °C, and intermittently during a humidifier stuck
+at 90 %; and a heater stuck early in ferment, never named, with the air reaching 35 °C at every defrost and no alarm.
+A 30 h sweep also showed a long compressor failure turning into an accusation of the heater.
+- The drying sign of a closed compressor relay counts only with the compressor commanded off for the whole half hour:
+  the controller's own dehumidifying runs, every 15 min in a cold room, dried the air and looked like a closed relay.
+- COOL_NO_EFFECT is withdrawn only by a run fair enough to judge (no defrost, door or bad reading in or just before it).
+  Right after a defrost the air settles back by itself, and that read as the compressor cooling: on 20 of 36 plants a
+  30 h compressor failure lost its alarm and HEAT_STUCK_ON accused the heater.
+- DEFROST_OVERHEAT (critical event): over a defrost and the 20 min after it, with nothing commanded to heat, from a
+  defrost that began with the air in band and a compressor that cools, the air passed the absolute limit (30 °C). With
+  nothing heating, a defrost warms the air only toward the room; past the limit it took a heat source inside. It names a
+  stuck heater (and a very hot room) and stays listed until acknowledged.
+Measured on the 36-plant sweep, 30 h after the event (4 / 13 / 24 °C): COOL_STUCK_ON wrongly named with a dead heater in
+a room 10 °C colder, 14, 11, 2 → 1, 0, 0; in a room 10 °C colder alone, 30 h: 0; HEAT_STUCK_ON during a 30 h compressor
+failure, 20 of 36 at 13 °C → 1, 8 at 24 °C → 2, and COOL_NO_EFFECT still standing at the end 14 → 32 and 7 → 14;
+DEFROST_OVERHEAT on a heater stuck at 24 °C, 32 of 36, and on no healthy plant, warmer room or dead compressor.
+Limits that remain:
+- A heater stuck early in a heating phase is not named as HEAT_STUCK_ON: the compressor beats it, and the cooling it
+  costs is learned as this setpoint's normal before it can be compared. What shows is DEFROST_OVERHEAT at the next
+  defrost (8 to 11 h on the base plant). Its compressor time (median 0.70 of the hour) overlaps a room 12 °C warmer
+  (up to 0.73), and the defrost's first 5 min rise separates it on only 4 to 16 of 36 plants.
+- Over 30 h a closed compressor relay's alarm clears before the repair on 9 to 14 of 36 plants at 4 to 13 °C, as the
+  coil ices and the air warms back.

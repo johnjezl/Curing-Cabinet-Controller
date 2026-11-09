@@ -67,6 +67,7 @@ var alarmDefs = map[string]alarmDef{
 	CodeDryingShift:  {api.SevWarning, "Drying rate changed with no change of setpoint", "Check temperature and humidity against separate instruments, and check nothing touches the scale.", ""},
 	CodeRefDisagree:  {api.SevCritical, "Sensor differs from the reference instrument", "Replace or calibrate the sensor, then check again.", ""},
 	CodeOutDropped:   {api.SevCritical, "Outputs were switched off by the hardware guard", "Control stopped renewing the guard (a stalled loop, or outputs that could not be written) and it cut all outputs. Control has resumed. Check the system log.", ""},
+	CodeDefrostHot:   {api.SevCritical, "Air passed the absolute limit during a defrost", "Nothing was heating, yet the air passed it. A heater stuck on does this: if the heater is warm, disconnect it. A very hot room can too.", "°C"},
 	CodeDefrostShort: {api.SevWarning, "Defrost keeps being cut short", "The air reaches its limit before the coil is clear. Check for ice on the coil and the room temperature.", ""},
 }
 
@@ -460,7 +461,10 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 					c.coolFailing = true
 				}
 			}
-			if drop >= 0.5 {
+			// Only a run fair enough to judge can show the compressor works: right after
+			// a defrost the air settles back by itself, and a 30 h compressor failure then
+			// read as cured, after which the heater was accused (re-test of defect 1).
+			if drop >= 0.5 && c.runClean {
 				c.coolFailing = false
 				c.badRuns = 0
 			}
@@ -478,7 +482,11 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	// and pulls the dew point down; once it stops, both come back.
 	dew30 := c.dewRing[len(c.dewRing)-1]
 	dried := c.chRH.ok() && c.rhF.v < set.RHPct-5
-	coilDrying := !math.IsNaN(dew) && !math.IsNaN(dew30) && dew30-dew >= 0.3 && dried
+	// Only drying with the compressor commanded off for the whole half hour counts: the
+	// controller's own dehumidifying runs dry the air too, and on the rig, in a cold room,
+	// they raised COOL_STUCK_ON 24 times in 6 h (re-test of defect 1).
+	offLong := !ctl.comp.on && (!ctl.comp.hasStop || t-ctl.comp.lastStop >= 1800)
+	coilDrying := offLong && !math.IsNaN(dew) && !math.IsNaN(dew30) && dew30-dew >= 0.3 && dried
 	coilStopped := !ctl.comp.on && !dried && !math.IsNaN(dew) && !math.IsNaN(dew30) && dew-dew30 >= 0.5
 	if !ctl.comp.on && tOK && quiet && (c.st.CoolDuty > 0.03 || c.coolStuck) {
 		off := t - ctl.comp.lastStop
@@ -542,7 +550,7 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	// turned cold with a dead heater takes the air toward saturation. So the air may be
 	// well under setpoint when the humidity has gone under its band too (re-test of
 	// defect 1: a closed compressor relay was never named, and the heater was accused).
-	dewFalling := (math.IsNaN(dew) || math.IsNaN(dew30) || dew30-dew >= 0.3) && (ts > set.TempC-1 || dried)
+	dewFalling := offLong && (math.IsNaN(dew) || math.IsNaN(dew30) || dew30-dew >= 0.3) && (ts > set.TempC-1 || dried)
 	// In a heating regime a busy heater is ordinary, unless a coil is drying the air with
 	// the compressor commanded off: at a 24 °C ferment a closed relay held the air at
 	// 12 °C with nothing naming it.
@@ -726,6 +734,28 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	c.timed(CodeRHDrift, c.crossRHSoft && c.st.RHDoubtUntil == 0, !c.crossRHSoft, 12*3600, 0, 0)
 	c.timed(CodeDryingShift, c.crossRateSoft && c.st.TDoubtUntil == 0 && c.st.RHDoubtUntil == 0, !c.crossRateSoft, 12*3600, 0, 0)
 	c.timed(CodeDefrostShort, c.defrostShortN >= 3, c.defrostShortN == 0, 0, float64(c.defrostShortN), 3)
+
+	// With nothing commanded to heat, the air of a defrost warms toward the room; the
+	// air keeps rising a little after the compressor is back. Past the absolute limit in
+	// that spell it took a heat source inside: on the rig a heater stuck on early in
+	// ferment drove it to 35 °C at every defrost with no alarm at all, before anything
+	// could name the heater (re-test of defect 1). An event: it stays listed until seen.
+	spell := ctl.defrost || (ctl.defrostEnd != 0 && t-ctl.defrostEnd < 1200)
+	switch {
+	case !spell:
+		c.defrostPeak, c.defrostHeated, c.defrostSeen = 0, false, false
+	case c.chT.quality == api.QualityOK:
+		// Only a defrost that began with the air in band, from a compressor that cools:
+		// a cabinet already warm from a dead compressor or a hot room says nothing.
+		if ctl.heatOn || c.coolFailing || ctl.defrostT0 > set.TempC+c.st.Limits.TempHighDelta {
+			c.defrostHeated = true
+		}
+		c.defrostPeak = math.Max(c.defrostPeak, c.tF.v)
+		if !c.defrostSeen && !c.defrostHeated && c.defrostPeak > c.st.Limits.AbsTempHighC {
+			c.defrostSeen = true
+			c.raise(CodeDefrostHot, c.defrostPeak, c.st.Limits.AbsTempHighC)
+		}
+	}
 }
 
 // dewPoint is the Magnus approximation, good to a few tenths of a degree here.
@@ -784,7 +814,7 @@ func (c *Core) escalate(a *activeAlarm, sev api.Severity) {
 // that is still happening. They signal once and stay listed until acknowledged.
 func isEventAlarm(code string) bool {
 	switch code {
-	case CodeOutage, CodeRestarted, CodeCureFinished, CodeWeightStep, CodeLogDamage, CodeStateLost, CodeOutDropped:
+	case CodeOutage, CodeRestarted, CodeCureFinished, CodeWeightStep, CodeLogDamage, CodeStateLost, CodeOutDropped, CodeDefrostHot:
 		return true
 	}
 	return false

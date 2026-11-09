@@ -175,6 +175,7 @@ const (
 	CodeRefDisagree  = "REFERENCE_DISAGREES"
 	CodeOutDropped   = "OUTPUTS_DROPPED"
 	CodeDefrostShort = "DEFROST_CUT_SHORT"
+	CodeDefrostHot   = "DEFROST_OVERHEAT"
 )
 
 // ProgramState is the persisted form of a running cure. Times are seconds of

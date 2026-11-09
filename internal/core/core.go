@@ -105,9 +105,13 @@ type Core struct {
 	// A step is taken as a load change only once it has held for stepConfirm, and, with a
 	// door switch, only if the door was open around it. Until then the loss figure stays
 	// at its value before the step.
-	stepConfirmAt  float64
-	stepDoor       bool
-	logDamageUntil float64
+	stepConfirmAt float64
+	stepDoor      bool
+	// The air over a defrost and the 20 min after it, and whether anything was commanded
+	// to heat meanwhile (DEFROST_OVERHEAT).
+	defrostPeak                float64
+	defrostHeated, defrostSeen bool
+	logDamageUntil             float64
 
 	coolRunStart, coolRunT0, coolBest  float64
 	coolFailing                        bool
@@ -1616,7 +1620,7 @@ func (c *Core) do(cmd api.Command) error {
 					c.weightStepT = 0
 					c.clear(code)
 				}
-				if code == CodeCureFinished || code == CodeOutDropped || code == CodeLogDamage {
+				if code == CodeCureFinished || code == CodeOutDropped || code == CodeLogDamage || code == CodeDefrostHot {
 					// Cure finished stays until the recipe is stopped; the others
 					// are done once somebody has seen them.
 					if code != CodeCureFinished {
