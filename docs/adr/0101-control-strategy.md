@@ -111,3 +111,9 @@ setpoint except where its sensor bias (±1 °C in the sweep) now shows, because 
   Ferment 90 to 87 %). Holding ±5 %RH at every instant needs a smaller dehumidifying step than a whole compressor run: a
   dedicated dehumidifier (`DehumidFitted`, output `dehum`) or a variable-speed compressor. With this hardware the band
   holds on averages over a compressor cycle or longer, not at every instant.
+
+## Owner's decision on the humidity band (2026-11-09)
+The owner accepted the 30-minute average as the measure for the ±5 %RH band (integration defect 7). Instantaneous
+humidity still swings with each compressor run, as described above; the band is judged on 30-minute means. On the rig
+(pi-5-3, simulated plant, compressed cures) humidity was within ±5 % of every setpoint 100 % of the time on 30-minute
+means, and 73 to 90 % instantaneously.
