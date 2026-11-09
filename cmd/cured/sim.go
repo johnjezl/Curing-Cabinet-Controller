@@ -180,15 +180,17 @@ func resolveGap(ctx context.Context, ck *checkpoint) (float64, string) {
 
 // simState is the running simulator.
 type simState struct {
-	o      simOptions
-	r      *runtime
-	pl     *sim.Plant
-	clk    *sim.Clock
-	f      *lineFilter
-	inbox  chan func()
-	plFS   *core.OSFS
-	seq    uint64
-	saving atomic.Bool
+	o     simOptions
+	r     *runtime
+	pl    *sim.Plant
+	clk   *sim.Clock
+	f     *lineFilter
+	inbox chan func()
+	plFS  *core.OSFS
+	seq   uint64
+	// ckW writes plant.json off the simulation loop, newest content only. A fault or a
+	// repair is reported only once it is on disk, so a crash cannot undo it unseen.
+	ckW *latestWriter
 
 	pub      atomic.Pointer[simPub]
 	outages  []outageRecord
@@ -280,21 +282,25 @@ func (s *simState) saveCheckpoint(clean bool) {
 	st := s.pl.SaveState()
 	s.seq++
 	ck := checkpoint{Plant: st, RealWall: time.Now(), Uptime: uptimeNow(), BootID: bootID(), Clean: clean, Seq: s.seq}
-	write := func() {
-		b, err := json.Marshal(ck)
-		if err == nil {
-			err = atomicWrite(filepath.Join(s.plFS.Dir, "plant.json"), b)
-		}
-		if err != nil {
-			logfJ("<4>cured: plant checkpoint: %v", err)
-		}
-	}
-	if clean {
-		write()
+	b, err := json.Marshal(ck)
+	if err != nil {
+		logfJ("<4>cured: plant checkpoint: %v", err)
 		return
 	}
-	if s.saving.CompareAndSwap(false, true) {
-		go func() { defer s.saving.Store(false); write() }()
+	if s.ckW == nil {
+		return
+	}
+	s.ckW.Put(b)
+	if clean && !s.ckW.Flush(10*time.Second) {
+		logfJ("<3>cured: the clean plant checkpoint was not saved in time")
+	}
+}
+
+// savedNote waits for the checkpoint holding a fault change to reach the disk, and
+// says so in the reply if it has not: until then a crash would undo the change.
+func (s *simState) savedNote(reply map[string]any) {
+	if s.ckW != nil && !s.ckW.Flush(20*time.Second) {
+		reply["saved"] = "not yet on disk (the card is slow): a crash now would undo this"
 	}
 }
 
@@ -443,6 +449,7 @@ func runSim(ctx context.Context, o simOptions) error {
 		return err
 	}
 	s := &simState{o: o, r: r, plFS: plFS, inbox: make(chan func(), 32), realStart: start}
+	s.ckW = newLatestWriter(filepath.Join(plFS.Dir, "plant.json"), logfJ)
 	fresh, err := s.loadOrNewPlant(ctx)
 	if err != nil {
 		return err
@@ -578,9 +585,6 @@ func runSim(ctx context.Context, o simOptions) error {
 	force := time.AfterFunc(stopBound, shutdownStuck)
 	defer force.Stop()
 	r.flushSaves()
-	for s.saving.Load() {
-		time.Sleep(10 * time.Millisecond)
-	}
 	s.saveCheckpoint(true)
 	stopAt := time.Now()
 	err = errors.Join(c.Close(), coreFS.Flush())

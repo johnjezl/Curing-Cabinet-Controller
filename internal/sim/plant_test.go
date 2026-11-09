@@ -287,6 +287,13 @@ func TestInjectionParametersMustMeanSomething(t *testing.T) {
 		{DevAir, FaultRange, 40, true, true},
 		{DevScale, FaultRange, 100, true, false},
 		{DevScale, FaultRange, 8388607, true, true},
+		// Third re-test: the controller still takes 8388000 counts as a weight, and a
+		// spike share under 0.2 is filtered out with no visible sign.
+		{DevScale, FaultRange, 8388000, true, false},
+		{DevScale, FaultRange, -8388608, true, true},
+		{DevTemp, FaultSpike, 0.1, true, false},
+		{DevRH, FaultSpike, 0.01, true, false},
+		{DevRH, FaultSpike, 0.2, true, true},
 	} {
 		err := pl.CheckInjection(c.d, c.k, c.p, c.has)
 		if (err == nil) != c.works {
@@ -311,5 +318,35 @@ func TestReadingFaultRefusedWhileTheChipIsDown(t *testing.T) {
 	pl.Inject(DevClimate, FaultNone, 0)
 	if err := pl.CheckInjection(DevTemp, FaultDrift, -1, true); err != nil {
 		t.Fatalf("chip back: %v", err)
+	}
+}
+
+// A fault on a part that is idle changes nothing until the part is used; the tool must
+// say so rather than report it as if it acted (defect 5, third re-test).
+func TestLatentFaultsAreNamed(t *testing.T) {
+	pl := NewPlant(BasePlant())
+	pl.CmdHeat, pl.CmdHumid, pl.CmdCool, pl.DoorIsOpen, pl.FanDuty = false, false, false, false, 0.5
+	for _, c := range []struct {
+		d      Device
+		k      FaultKind
+		p      float64
+		latent bool
+	}{
+		{DevHeat, FaultRelayStuckOff, 0, true},
+		{DevHeat, FaultRelayStuckOn, 0, false},
+		{DevHumidifier, FaultEmpty, 0, true},
+		{DevCompressor, FaultNoCool, 0, true},
+		{DevDoorSwitch, FaultStuck, 0, true},
+		{DevDoorSwitch, FaultStuck, 1, false},
+		{DevFan, FaultStall, 0, false},
+		{DevTemp, FaultDrift, -1, false},
+	} {
+		if got := pl.Latent(c.d, c.k, c.p) != ""; got != c.latent {
+			t.Errorf("%s %s %v: latent %v, want %v", c.d, c.k, c.p, got, c.latent)
+		}
+	}
+	pl.CmdHeat = true
+	if pl.Latent(DevHeat, FaultRelayStuckOff, 0) != "" || pl.Latent(DevHeat, FaultRelayStuckOn, 0) == "" {
+		t.Error("with the heater on, stuck off acts now and stuck on waits")
 	}
 }

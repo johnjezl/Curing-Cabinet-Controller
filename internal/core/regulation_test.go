@@ -289,3 +289,37 @@ func TestOutagePeakKeptAcrossAQuickSecondGapAndAnOrderlyRestart(t *testing.T) {
 		t.Error("an orderly restart took an unacknowledged outage off the list")
 	}
 }
+
+// Defect 5, third re-test: `scale range 8388000` was read by the controller as a 79 kg
+// load and re-based the cure's weight loss for good. The simulator now only accepts a
+// saturated count for range, and the controller must take that as a fault, not a load.
+func TestSaturatedScaleIsAFaultNotALoad(t *testing.T) {
+	r := newRun(t)
+	sp := api.Setpoints{TempC: 13, RHPct: 76, AirMS: 1.0}
+	rc := api.Recipe{ID: "t", Name: "t", Phases: []api.PhaseSpec{{Name: "dry", Setpoint: sp, Duration: 10 * 24 * time.Hour}}}
+	if err := r.Core.Do(api.Command{Kind: api.CmdSaveRecipe, Recipe: &rc}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Core.Do(api.Command{Kind: api.CmdStart, RecipeID: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	r.Advance(86400)
+	before := r.Core.Snapshot().Program.WeightLossPct
+	if err := r.Plant.CheckInjection(sim.DevScale, sim.FaultRange, 8388607, true); err != nil {
+		t.Fatal(err)
+	}
+	r.Plant.Inject(sim.DevScale, sim.FaultRange, 8388607)
+	r.Evs = nil
+	r.Advance(1800)
+	if q := r.Core.Snapshot().Weight.Quality; q == api.QualityOK {
+		t.Errorf("a saturated scale reads as a good weight")
+	}
+	r.Plant.Inject(sim.DevScale, sim.FaultNone, 0)
+	r.Advance(1800)
+	if n := alarmEvents(r, "WEIGHT_STEP"); n != 0 {
+		t.Errorf("WEIGHT_STEP raised %d times by a saturated scale", n)
+	}
+	if after := r.Core.Snapshot().Program.WeightLossPct; math.Abs(after-before) > 0.5 {
+		t.Errorf("weight loss %.2f %% before, %.2f %% after a saturated scale", before, after)
+	}
+}

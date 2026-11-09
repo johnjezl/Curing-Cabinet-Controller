@@ -147,28 +147,37 @@ func (pl *Plant) CheckInjection(d Device, k FaultKind, param float64, hasParam b
 	}
 	// The smallest value that moves the reading by one sensor step within a day (drift)
 	// or at once (offset), and the values a sensor cannot report (range).
-	minDrift, minOffset, unit := 0.01, 0.1, "units"
+	minDrift, minOffset := 0.01, 0.1
+	driftUnit, offsetUnit, driftEg, offsetEg := "units per virtual hour", "units", "-0.5", "-2"
 	inRange := func(v float64) bool { return false }
 	rangeEg := ""
 	switch d {
 	case DevTemp:
-		unit, inRange, rangeEg = "°C", func(v float64) bool { return v >= -20 && v <= 60 }, "below -20 or above 60 °C (e.g. 'temp range 85')"
+		driftUnit, offsetUnit = "°C per virtual hour", "°C"
+		inRange, rangeEg = func(v float64) bool { return v >= -20 && v <= 60 }, "below -20 or above 60 °C (e.g. 'temp range 85')"
 	case DevRH:
-		unit, inRange, rangeEg = "%RH", func(v float64) bool { return v >= 0.5 && v <= 100 }, "below 0.5 or above 100 % (e.g. 'rh range 101')"
+		driftUnit, offsetUnit, driftEg, offsetEg = "%RH per virtual hour", "%RH", "2", "5"
+		inRange, rangeEg = func(v float64) bool { return v >= 0.5 && v <= 100 }, "below 0.5 or above 100 % (e.g. 'rh range 101')"
 	case DevAir:
-		minDrift, minOffset, unit = 0.001, 0.01, "m/s (drift: share of the reading)"
+		minDrift, minOffset = 0.001, 0.01
+		driftUnit, offsetUnit, driftEg, offsetEg = "share of the reading per virtual hour", "m/s", "-0.05", "0.2"
 		inRange, rangeEg = func(v float64) bool { return v >= -0.1 && v <= 8 }, "below -0.1 or above 8 m/s (e.g. 'air range 40')"
 	case DevScale:
-		minDrift, minOffset, unit = 1, 1, "g"
-		inRange, rangeEg = func(v float64) bool { return math.Abs(v) < 8388000 }, "a raw ADC count at its limit, 8388000 or more either way (e.g. 'scale range 8388607'); range is in counts, not grams"
+		minDrift, minOffset = 1, 1
+		driftUnit, offsetUnit, driftEg, offsetEg = "g per virtual hour", "g", "-50", "100"
+		// The controller takes raw counts up to 8388000 either way as a weight, so a
+		// range value must be past that: the HX711 gives 8388607 when saturated.
+		inRange, rangeEg = func(v float64) bool { return math.Abs(v) <= 8388000 }, "a raw ADC count past the controller's limit of 8388000 either way, as a saturated HX711 gives (e.g. 'scale range 8388607'); range is in counts, not grams"
 	}
 	switch {
 	case k == FaultDrift:
-		return need(fmt.Sprintf("a rate in %s per virtual hour, at least %g and at most 50 either way, or it never shows (e.g. '%s drift -0.5')", unit, minDrift, d), math.Abs(param) >= minDrift && math.Abs(param) <= 50)
+		return need(fmt.Sprintf("a rate in %s, at least %g and at most 50 either way, or it never shows (e.g. '%s drift %s')", driftUnit, minDrift, d, driftEg), math.Abs(param) >= minDrift && math.Abs(param) <= 50)
 	case k == FaultOffset:
-		return need(fmt.Sprintf("an offset in %s, at least %g and at most 100 either way (e.g. '%s offset -2')", unit, minOffset, d), math.Abs(param) >= minOffset && math.Abs(param) <= 100)
+		return need(fmt.Sprintf("an offset in %s, at least %g and at most 100 either way (e.g. '%s offset %s')", offsetUnit, minOffset, d, offsetEg), math.Abs(param) >= minOffset && math.Abs(param) <= 100)
 	case k == FaultSpike:
-		return need(fmt.Sprintf("the share of samples that spike, at least 0.01 and at most 1 (e.g. '%s spike 0.2')", d), param >= 0.01 && param <= 1)
+		// Fewer spikes than this are filtered out by the controller with no sign at
+		// all, which from outside is an injection that did nothing (re-test of defect 5).
+		return need(fmt.Sprintf("the share of samples that spike, at least 0.2 and at most 1; fewer are filtered out with no visible sign (e.g. '%s spike 0.3')", d), param >= 0.2 && param <= 1)
 	case k == FaultRange:
 		return need("a value the sensor cannot report: "+rangeEg+"; a normal value would only freeze the reading, which is 'stuck'", !inRange(param))
 	case k == FaultStuck && d == DevDoorSwitch:
@@ -184,6 +193,34 @@ func (pl *Plant) CheckInjection(d Device, k FaultKind, param float64, hasParam b
 	}
 	return nil
 }
+
+// Latent says why a fault just injected into d changes nothing yet: the part it acts
+// on is idle. It returns "" when the fault acts at once. A fault on a part that is
+// not in use is a fair test, but the tool must say it has had no effect so far.
+func (pl *Plant) Latent(d Device, k FaultKind, param float64) string {
+	cmd := map[Device]*bool{DevCool: &pl.CmdCool, DevHeat: &pl.CmdHeat, DevHumid: &pl.CmdHumid, DevDehumid: &pl.CmdDehumid}
+	switch {
+	case k == FaultRelayStuckOff && cmd[d] != nil && !*cmd[d]:
+		return fmt.Sprintf("no effect until the controller turns %s on: it is off now", d)
+	case k == FaultRelayStuckOn && cmd[d] != nil && *cmd[d]:
+		return fmt.Sprintf("no effect until the controller turns %s off: it is on now", d)
+	case d == DevCompressor && k == FaultNoCool && !pl.CmdCool:
+		return "no effect until the compressor runs: it is off now"
+	case d == DevHumidifier && k == FaultEmpty && !pl.CmdHumid:
+		return "no effect until the humidifier is called: it is off now"
+	case (d == DevFan && k == FaultStall || d == DevDuct && k == FaultBlocked) && pl.FanDuty <= 0:
+		return "no effect until the fan runs: it is stopped now"
+	case d == DevDoorSwitch && k == FaultStuck && (param == 1) == pl.DoorIsOpen:
+		if pl.DoorIsOpen {
+			return "no effect until the door is closed: the switch already reads open"
+		}
+		return "no effect until the door is opened: the switch already reads closed"
+	}
+	return ""
+}
+
+// FaultParam is the value the current fault on d was injected with.
+func (pl *Plant) FaultParam(d Device) float64 { return pl.Faults.param[d] }
 
 // CheckFault says whether injecting k into d changes anything. FaultNone (repair)
 // always does.

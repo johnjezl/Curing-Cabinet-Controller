@@ -173,21 +173,48 @@ func (s *simState) handle(a []string) (any, error) {
 			p = v
 		}
 		reply := map[string]any{"ok": true, "injected": d.String() + ":" + k.String()}
+		if len(a) > 2 {
+			reply["value"] = p // what was applied, as parsed
+		}
 		var refused error
 		err := s.onPlant(func() {
 			if refused = s.pl.CheckInjection(d, k, p, len(a) > 2); refused != nil {
 				return
 			}
 			switch prev := s.pl.FaultOn(d); {
+			case prev == k && k == sim.FaultDrift:
+				reply["restarted"] = d.String() + ":drift (what it had built up starts again from zero)"
+			case prev == k && s.pl.FaultParam(d) == p:
+				// Re-freezing a stuck reading, or an offset it already has, changes nothing.
+				refused = fmt.Errorf("%s %s is already injected with this value, so this would change nothing; repair %s first to start it again", d, k, d)
+				return
 			case prev == k:
-				reply["restarted"] = d.String() + ":" + k.String() + " (what it had built up starts again)"
+				reply["changed"] = fmt.Sprintf("%s:%s %g -> %g", d, k, s.pl.FaultParam(d), p)
 			case prev != sim.FaultNone:
 				reply["replaced"] = d.String() + ":" + prev.String() // one fault per device
 			}
+			if d == sim.DevClimate { // a chip fault hides what is injected on its readings
+				var masked []string
+				for _, r := range []sim.Device{sim.DevTemp, sim.DevRH} {
+					if f := s.pl.FaultOn(r); f != sim.FaultNone {
+						masked = append(masked, r.String()+":"+f.String())
+					}
+				}
+				if len(masked) > 0 {
+					reply["masks"] = strings.Join(masked, ", ") + " until climate is repaired"
+				}
+			}
 			s.pl.Inject(d, k, p)
+			if why := s.pl.Latent(d, k, p); why != "" {
+				reply["latent"] = why
+			}
+			s.saveCheckpoint(false)
 		})
 		if refused != nil {
 			return nil, fmt.Errorf("refused: %v", refused)
+		}
+		if err == nil {
+			s.savedNote(reply)
 		}
 		return reply, err
 	case "repair":
@@ -203,12 +230,17 @@ func (s *simState) handle(a []string) (any, error) {
 					}
 					s.pl.Inject(d, sim.FaultNone, 0)
 				}
+				s.saveCheckpoint(false)
 			})
 			sort.Strings(done)
+			reply := map[string]any{"ok": true, "repaired": done}
 			if len(done) == 0 {
-				return map[string]any{"ok": true, "note": "no fault was injected"}, err
+				reply = map[string]any{"ok": true, "note": "no fault was injected"}
 			}
-			return map[string]any{"ok": true, "repaired": done}, err
+			if err == nil {
+				s.savedNote(reply)
+			}
+			return reply, err
 		}
 		d, okD := devNames[a[0]]
 		if !okD {
@@ -222,7 +254,11 @@ func (s *simState) handle(a []string) (any, error) {
 				reply["repaired"] = d.String() + ":" + prev.String()
 			}
 			s.pl.Inject(d, sim.FaultNone, 0)
+			s.saveCheckpoint(false)
 		})
+		if err == nil {
+			s.savedNote(reply)
+		}
 		return reply, err
 	case "start":
 		if len(a) != 1 {

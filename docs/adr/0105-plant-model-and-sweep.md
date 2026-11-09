@@ -67,3 +67,19 @@ counts). The reply says `restarted` when the same fault is sent again, a text va
 or fault lists the valid ones, and `repair all` lists what it repaired or says nothing was injected.
 `TestInjectionParametersMustMeanSomething`, `TestReadingFaultRefusedWhileTheChipIsDown` and
 `TestSimctlRepliesSayWhatHappened` hold this.
+
+Fourth amendment, after the third re-test (next fix round): drift and stuck passed again; the tool still answered ok
+for injections with no visible effect. Spikes under a share of 0.2 are filtered out by the controller with no sign at
+all, so 0.2 is now the floor for spike. Re-sending a stuck fault, an offset or any other fault with the same value
+changed nothing and was reported as "restarted": it is now refused, except drift, whose accumulated error really
+starts again from zero; a fault re-sent with a new value reports "changed: old -> new". A fault on a part that is
+idle (a relay stuck in the state it is already commanded to, an empty humidifier that is not called, a compressor that
+is off, a door switch stuck at the state it already reads, a fan or duct fault with the fan stopped) is accepted, since
+it is a fair test, but the reply says "latent" and why. `scale range` must be past the controller's limit of 8388000
+counts (8388000 itself was read as a 79 kg load and re-based the cure's loss); the example is the HX711's saturated
+8388607. Replies echo the value applied, a climate-chip fault names the reading faults it masks, and the units and
+examples in refusals match the device. A fault or repair is reported only once the plant checkpoint holding it is on
+disk (written by the same newest-only writer as ADR 0408's files), or the reply says it is not yet saved; before, a
+repair made during a slow card write could be undone by a crash.
+`TestInjectionParametersMustMeanSomething`, `TestLatentFaultsAreNamed`, `TestSimctlRepliesSayWhatHappened` and
+`TestSaturatedScaleIsAFaultNotALoad` hold this.
