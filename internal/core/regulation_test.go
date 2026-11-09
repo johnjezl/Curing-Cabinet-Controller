@@ -323,3 +323,38 @@ func TestSaturatedScaleIsAFaultNotALoad(t *testing.T) {
 		t.Errorf("weight loss %.2f %% before, %.2f %% after a saturated scale", before, after)
 	}
 }
+
+// Re-test of defect 5 found scale glitches re-basing the cure's loss for good. A step is
+// a load change only once it has held for 10 min, and with a door switch only if the door
+// was open around it; until then the loss figure stays where it was.
+func TestScaleGlitchDoesNotRebaseTheLoss(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		hold float64
+	}{{"5 min glitch", 300}, {"30 min glitch with the door closed", 1800}} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRun(t)
+			sp := api.Setpoints{TempC: 13, RHPct: 76, AirMS: 1.0}
+			rc := api.Recipe{ID: "t", Name: "t", Phases: []api.PhaseSpec{{Name: "dry", Setpoint: sp, Duration: 10 * 24 * time.Hour}}}
+			if err := r.Core.Do(api.Command{Kind: api.CmdSaveRecipe, Recipe: &rc}); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.Core.Do(api.Command{Kind: api.CmdStart, RecipeID: "t"}); err != nil {
+				t.Fatal(err)
+			}
+			r.Advance(2 * 86400)
+			before := r.Core.Snapshot().Program.WeightLossPct
+			r.Plant.Inject(sim.DevScale, sim.FaultOffset, 5000) // 5 kg more, door shut
+			r.Advance(120)
+			if l := r.Core.Snapshot().Program.WeightLossPct; math.Abs(l-before) > 0.2 {
+				t.Errorf("loss %.2f %% right after the jump, was %.2f %%: it must hold while unconfirmed", l, before)
+			}
+			r.Advance(c.hold - 120)
+			r.Plant.Inject(sim.DevScale, sim.FaultNone, 0)
+			r.Advance(3600)
+			if after := r.Core.Snapshot().Program.WeightLossPct; math.Abs(after-before) > 0.5 {
+				t.Errorf("loss %.2f %% before, %.2f %% after a scale glitch: re-based", before, after)
+			}
+		})
+	}
+}

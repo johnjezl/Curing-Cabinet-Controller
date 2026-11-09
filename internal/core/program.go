@@ -182,12 +182,20 @@ func (c *Core) rebaseLoss(before, after float64) {
 	c.saveSoon()
 }
 
+// stepConfirm is how long a new weight level must hold before it is taken as a load
+// change.
+const stepConfirm = 600.0
+
 func (c *Core) lossPct() float64 {
 	p := &c.st.Program
 	if p.StartWeightG <= 0 || !c.weightF.init {
 		return 0
 	}
-	return (p.StartWeightG - c.weightF.v) / p.StartWeightG * 100
+	w := c.weightF.v
+	if c.rebasePending {
+		w = c.weightBefore // the figure before the step, until the step is confirmed
+	}
+	return (p.StartWeightG - w) / p.StartWeightG * 100
 }
 
 func (c *Core) scaleCal() bool { return math.Abs(c.st.Cal.ScaleCountsPG) > 1e-6 }

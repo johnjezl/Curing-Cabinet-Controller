@@ -77,3 +77,11 @@ Status: accepted. Fixes integration defects 6, 8 and 9. Amends ADR 0107 and ADR 
   critical ("humidity reading looks wrong") kept the headline over HEAT_STUCK_ON, outputs down and a power outage; the
   newest is usually the cause named after the excursion it explains, or a new fault.
 `TestCrashDatedFromTheLastSignOfLife`, `TestLastAliveFromStatus` and `TestHeadlineRanksLiveConditionsOverEvents` hold this.
+- Load change: a weight step was re-based a few seconds after three agreeing samples, so a scale glitch that held
+  briefly was taken as a load and corrupted the cure's loss for good (the defect 5 re-test saw a glitch read as 69 kg,
+  and spikes driving the loss to -190 %); the glitch's end was then a second step. A step is now taken as a load change
+  only once the new level has held 10 min, is cancelled if the weight comes back within 100 g of its level before, and
+  is not re-based while the scale is faulted; with a door switch fitted, a step with the door shut throughout (no open
+  or close within 10 min before it) is never a load change, and the event says to check the scale. Until a step is
+  confirmed the loss figure stays at its value before the step. Without a door switch a glitch that holds more than
+  10 min at a new level is still taken as a load. `TestScaleGlitchDoesNotRebaseTheLoss` holds this.

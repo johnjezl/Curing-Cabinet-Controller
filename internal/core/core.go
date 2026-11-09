@@ -102,7 +102,12 @@ type Core struct {
 	weightStepT                                   float64
 	weightBefore                                  float64 // filtered weight just before an accepted step
 	rebasePending                                 bool
-	logDamageUntil                                float64
+	// A step is taken as a load change only once it has held for stepConfirm, and, with a
+	// door switch, only if the door was open around it. Until then the loss figure stays
+	// at its value before the step.
+	stepConfirmAt  float64
+	stepDoor       bool
+	logDamageUntil float64
 
 	coolRunStart, coolRunT0, coolBest  float64
 	coolFailing                        bool
@@ -782,7 +787,11 @@ func (c *Core) ingest(in inputs, dt float64) {
 			// Three agreeing samples at a new level: something really changed.
 			c.weightStepT = t
 			if c.weightF.init && c.scaleCal() {
-				c.weightBefore, c.rebasePending = c.weightF.v, true
+				if !c.rebasePending {
+					c.weightBefore = c.weightF.v // a second step while one is pending keeps the first level
+				}
+				c.rebasePending, c.stepConfirmAt = true, t+stepConfirm
+				c.stepDoor = c.stepDoor || c.doorOpen || (c.lastDoorT != 0 && t-c.lastDoorT <= stepConfirm)
 			}
 			c.crossReset()
 			c.scaleRawF.reset()
@@ -799,8 +808,22 @@ func (c *Core) ingest(in inputs, dt float64) {
 			g := (raw - float64(cal.ScaleZero)) / cal.ScaleCountsPG
 			c.weightF.v, c.weightF.init = g, true
 			if c.rebasePending {
-				c.rebasePending = false
-				c.rebaseLoss(c.weightBefore, g)
+				// A glitch that comes and goes, or that only a closed door saw, must not
+				// re-base the cure's loss for good (re-test of defect 5 found a scale glitch
+				// taken as a 69 kg load, and spikes driving the loss to -190 %).
+				switch {
+				case math.Abs(g-c.weightBefore) < 100:
+					c.rebasePending, c.stepDoor = false, false
+					c.event(Event{Type: EvPhase, Msg: "weight back at its level before the step: not a load change"})
+				case t >= c.stepConfirmAt:
+					c.rebasePending = false
+					if c.doorFitted && !c.stepDoor {
+						c.event(Event{Type: EvPhase, Msg: fmt.Sprintf("weight changed by %+.0f g with the door closed: not taken as a load change; check the scale", g-c.weightBefore)})
+					} else {
+						c.rebaseLoss(c.weightBefore, g)
+					}
+					c.stepDoor = false
+				}
 			}
 		}
 	}
