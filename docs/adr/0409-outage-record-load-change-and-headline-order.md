@@ -62,3 +62,5 @@ Status: accepted. Fixes integration defects 6, 8 and 9. Amends ADR 0107 and ADR 
 - The restart-burst alarm keeps the largest count it has reported: a reboot restarts the count, and the record had
   dropped from 8 to 4.
 
+- The system-alarms file is written off the caller's goroutine, never while holding the alarm table's lock (ADR 0408,
+  "Regression found on the rig").

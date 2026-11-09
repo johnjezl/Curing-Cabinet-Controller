@@ -68,11 +68,13 @@ type runtime struct {
 	upStart float64
 	sys     *sysAlarms
 	ann     *annunciator
-	v       *view
-	uiCtl   api.Controller // what the panel talks to; r.v unless a test wraps it
-	c       *core.Core
-	safeCfg drivers.Config
-	statusX func() any
+	// openingsW saves the contact's opening count off the control loop.
+	openingsW *latestWriter
+	v         *view
+	uiCtl     api.Controller // what the panel talks to; r.v unless a test wraps it
+	c         *core.Core
+	safeCfg   drivers.Config
+	statusX   func() any
 	// linesDriven is false in simulation: the contact and buzzer states in the
 	// status are the simulated decision, and no real line follows them.
 	linesDriven bool
@@ -230,17 +232,32 @@ func (r *runtime) wireOpenings(contactFile string) {
 	if closed {
 		n++
 	}
+	// The annunciator calls this on the control loop, holding its lock: it must not
+	// wait for the disk (regression from 42d54c3).
+	w := newLatestWriter(contactFile, logfJ)
+	r.openingsW = w
 	write := func(n uint64, closed bool) {
 		c := 0
 		if closed {
 			c = 1
 		}
-		if err := atomicWrite(contactFile, []byte(fmt.Sprintf("%d %d\n", n, c))); err != nil {
-			logfJ("<4>cured: contact count: %v", err)
-		}
+		w.Put([]byte(fmt.Sprintf("%d %d\n", n, c)))
 	}
 	write(n, false)
 	r.ann.openings, r.ann.persist = n, write
+}
+
+// flushSaves gives cured's own state files a moment to reach the disk at an orderly
+// stop. They are written off the control loop; what does not make it in time is the
+// newest change or so, as at a power cut.
+func (r *runtime) flushSaves() {
+	const wait = 3 * time.Second
+	if r.openingsW != nil && !r.openingsW.Flush(wait) {
+		logfJ("<4>cured: stopping before the contact count was saved")
+	}
+	if r.sys != nil && !r.sys.Flush(wait) {
+		logfJ("<4>cured: stopping before the system alarms were saved")
+	}
 }
 
 // noteStart records this start and counts recent ones. The file is on tmpfs, so a
@@ -499,6 +516,7 @@ func runReal(ctx context.Context) error {
 	logfJ("<5>cured: stopping")
 	force := time.AfterFunc(stopBound, shutdownStuck)
 	defer force.Stop()
+	r.flushSaves()
 	stopAt := time.Now()
 	slow := time.AfterFunc(5*time.Second, func() {
 		logfJ("<4>cured: stop is slow: still flushing state to the card")

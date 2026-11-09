@@ -60,7 +60,10 @@ type sysAlarms struct {
 	pending [][3]string
 	// path keeps the event alarms and the history across a restart or power cut;
 	// conditions are found again by the new process (integration defect 6, re-test).
+	// w writes it off the caller's goroutine: the control loop takes mu every tick, so
+	// mu is never held while waiting for the disk.
 	path string
+	w    *latestWriter
 }
 
 type sysSaved struct {
@@ -75,6 +78,7 @@ func (s *sysAlarms) Persist(path string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.path = path
+	s.w = newLatestWriter(path, s.logf)
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return
@@ -99,9 +103,10 @@ func (s *sysAlarms) Persist(path string) {
 	}
 }
 
-// save writes the event alarms and history. Caller holds mu.
+// save hands the event alarms and history to the writer. Caller holds mu; nothing
+// here waits for the disk.
 func (s *sysAlarms) save() {
-	if s.path == "" {
+	if s.w == nil {
 		return
 	}
 	v := sysSaved{Real: map[string]time.Time{}, Hist: s.hist, Seq: s.seq}
@@ -112,12 +117,19 @@ func (s *sysAlarms) save() {
 		}
 	}
 	b, err := json.Marshal(v)
-	if err == nil {
-		err = atomicWrite(s.path, b)
-	}
 	if err != nil {
 		s.logf("<4>cured: system alarms file: %v", err)
+		return
 	}
+	s.w.Put(b)
+}
+
+// Flush waits up to d for the saved alarms to reach the disk.
+func (s *sysAlarms) Flush(d time.Duration) bool {
+	s.mu.Lock()
+	w := s.w
+	s.mu.Unlock()
+	return w == nil || w.Flush(d)
 }
 
 // SetRecord connects the journal and writes what waited for it.

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -393,12 +394,18 @@ func TestSystemEventSurvivesANewProcess(t *testing.T) {
 	s.Persist(path)
 	s.RaiseEvent(CodeRestartLoop, api.SevCritical, "t", "a")
 	s.Raise(CodeSafeState, api.SevCritical, "t", "a") // a condition: found again, not kept
+	if !s.Flush(3 * time.Second) {
+		t.Fatal("not saved")
+	}
 	s2 := newSysAlarms(func() time.Time { return now }, func() bool { return true }, func(string, ...any) {})
 	s2.Persist(path)
 	if codes := s2.Codes(); len(codes) != 1 || codes[0] != CodeRestartLoop {
 		t.Fatalf("after a new process: %v", codes)
 	}
 	s2.Ack("")
+	if !s2.Flush(3 * time.Second) {
+		t.Fatal("acknowledgement not saved")
+	}
 	s3 := newSysAlarms(func() time.Time { return now }, func() bool { return true }, func(string, ...any) {})
 	s3.Persist(path)
 	if len(s3.Active()) != 0 || len(s3.History()) != 1 || s3.History()[0].Code != CodeRestartLoop {
@@ -499,9 +506,76 @@ func TestOpeningCountSurvivesAPowerCut(t *testing.T) {
 	r1 := &runtime{ann: newAnnunciator(nil, &lineFilter{next: &recLines{}}, newSysAlarms(time.Now, func() bool { return true }, func(string, ...any) {}), time.Now())}
 	r1.wireOpenings(path)
 	r1.ann.persist(43, true) // 43 openings so far, contact closed when power went
+	if !r1.openingsW.Flush(3 * time.Second) {
+		t.Fatal("not saved")
+	}
 	r2 := &runtime{ann: newAnnunciator(nil, &lineFilter{next: &recLines{}}, newSysAlarms(time.Now, func() bool { return true }, func(string, ...any) {}), time.Now())}
 	r2.wireOpenings(path)
 	if got := r2.ann.Openings(); got != 44 {
 		t.Fatalf("openings after the cut %d, want 44 (43 and the cut's own)", got)
 	}
+	r2.openingsW.Flush(3 * time.Second)
+}
+
+// Regression from 42d54c3, found on the rig: the opening count was saved with fsync on
+// the control loop, and a slow SD card held it past the 10 s watchdog, which aborted
+// cured twice with no fault injected. System alarms were saved the same way while holding
+// the lock the control loop takes every tick. Nothing the control loop calls may wait for
+// the disk, and what was saved must still arrive.
+func TestControlLoopNeverWaitsForTheDisk(t *testing.T) {
+	release := make(chan struct{})
+	slow := writeFileSync
+	writeFileSync = func(path string, b []byte) error { <-release; return slow(path, b) }
+	released := false
+	free := func() {
+		if !released {
+			released = true
+			close(release)
+		}
+	}
+	defer func() { free(); writeFileSync = slow }()
+	quick := func(what string, fn func()) {
+		t.Helper()
+		done := make(chan struct{})
+		go func() { fn(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(200 * time.Millisecond):
+			t.Fatalf("%s waited for the disk", what)
+		}
+	}
+	dir := t.TempDir()
+	contact, alarms := filepath.Join(dir, "contact"), filepath.Join(dir, "system-alarms.json")
+	a, f, _, sys, clock := testAnn()
+	sys.Persist(alarms)
+	r := &runtime{ann: a}
+	quick("starting the opening count", func() { r.wireOpenings(contact) })
+	_ = f.Set(hal.OutAlarm, true)
+	*clock = clock.Add(armDelay)
+	quick("a contact change", func() { a.Tick(*clock, api.QualityOK) })
+	// A system alarm raised elsewhere: its save is now stuck behind the slow disk, and
+	// the control loop goes on reading the system alarms meanwhile.
+	quick("raising a system alarm", func() { sys.RaiseEvent(CodeRestartLoop, api.SevCritical, "t", "a") })
+	for i := 0; i < 3; i++ {
+		*clock = clock.Add(time.Second)
+		quick("the control loop reading the system alarms", func() { a.Tick(*clock, api.QualityOK) })
+	}
+	free()
+	has := func(path, want string) bool {
+		for end := time.Now().Add(3 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+			if b, err := os.ReadFile(path); err == nil && strings.Contains(string(b), want) {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(alarms, CodeRestartLoop) {
+		t.Error("the system alarm never reached the disk")
+	}
+	if !has(contact, fmt.Sprintf("%d 0", a.Openings())) {
+		b, _ := os.ReadFile(contact)
+		t.Errorf("contact file %q, want the latest count %d, open", b, a.Openings())
+	}
+	r.openingsW.Flush(3 * time.Second)
+	sys.Flush(3 * time.Second)
 }

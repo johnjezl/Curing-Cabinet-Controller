@@ -312,6 +312,10 @@ func (s *simState) publish(done float64) {
 	s.pub.Store(p)
 }
 
+// writeFileSync is how cured's own small state files reach the disk; a test may
+// make it slow.
+var writeFileSync = atomicWrite
+
 // atomicWrite replaces path so that a reader sees the old or the new content,
 // never a torn file, whatever kills the process or the power. core's ReplaceSync
 // writes in place, which suits its two alternating slots but not a single file.
@@ -573,6 +577,7 @@ func runSim(ctx context.Context, o simOptions) error {
 	logfJ("<5>cured: stopping")
 	force := time.AfterFunc(stopBound, shutdownStuck)
 	defer force.Stop()
+	r.flushSaves()
 	for s.saving.Load() {
 		time.Sleep(10 * time.Millisecond)
 	}

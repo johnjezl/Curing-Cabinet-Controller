@@ -59,3 +59,20 @@ The re-test passed the buzzer, acknowledgement, silence and restart parts, and f
 - A silence ended early by a new alarm is journalled ("silence ended early: <code> sounded").
 `TestDeadSensorAtStartStillGivesFreshTransitions`, `TestOpeningCountSurvivesAPowerCut` and
 `TestNewAlarmCountedAndSilenceEndRecordedAndRecoveredSensorNotStuck` hold this.
+
+## Regression found on the rig, and its fix
+Moving the opening count to the state directory (previous revision) put an fsync on the control loop: the annunciator
+saved the count, with `atomicWrite`, from its tick, holding its lock. On pi-5-3, with core's journal writer fsyncing at
+the same moment, the SD card took over 10 s to answer, and the systemd watchdog aborted cured twice in one compressed
+cure with no fault injected (the abort's stack shows goroutine 1 in `fsync` under `annunciator.tick`). Each time the
+outputs dropped for about 17 s and CONTROLLER_RESTARTED was raised. cured's system alarms (ADR 0409) were saved the same
+way while holding the lock the control loop takes every tick to decide the contact and buzzer, a second path to the
+same stall.
+
+Both files are now written by a background writer (`latestWriter`): the caller hands it the new content and returns at
+once; only the newest content is kept, and each write still uses `atomicWrite` (fsync and rename), so the file on disk
+is always whole. A power cut can lose the last change, so the count can be one short; never a torn file. A write that
+takes a second or more is logged ("slow write"). An orderly stop waits up to 3 s for both to be saved. core's own state
+and journal were already written off the control loop and drop rather than block when their queue is full.
+`TestControlLoopNeverWaitsForTheDisk` blocks every write and checks that the control loop's calls still return in
+under 200 ms and that the newest content reaches the disk once writes resume.
