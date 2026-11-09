@@ -76,3 +76,15 @@ takes a second or more is logged ("slow write"). An orderly stop waits up to 3 s
 and journal were already written off the control loop and drop rather than block when their queue is full.
 `TestControlLoopNeverWaitsForTheDisk` blocks every write and checks that the control loop's calls still return in
 under 200 ms and that the newest content reaches the disk once writes resume.
+
+## Revision in the next fix round (defect 3)
+The third re-test passed the brief close over a standing restart-burst alarm and failed on starts: for the 15 s after
+any start (60 s with the climate sensor dead) the relay is not armed, and an alarm raised then (CONTROLLER_RESTARTED,
+POWER_OUTAGE, a fault found at boot) never made a transition, not even after arming; with the contact already open, a
+remote monitor learned nothing. And on its first tick the annunciator took every system alarm already calling as old
+news, including the restart burst that very start had raised, so the defect's own alarm never reached the contact.
+- A new alarm while unarmed is remembered; when the relay arms, it gets its brief close and fresh opening. The contact
+  still never closes before arming.
+- On the first tick only system alarms restored from an earlier process (already signalled by it) are old news.
+Two alarms within one brief close still share its reopening. `TestAfterADropNoBriefCloseAndTheBuzzerSounds` (now: no
+close while unarmed, one brief close after) and `TestRestartBurstAtStartIsNews` hold this.

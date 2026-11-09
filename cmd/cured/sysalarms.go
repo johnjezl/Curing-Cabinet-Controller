@@ -64,6 +64,9 @@ type sysAlarms struct {
 	// mu is never held while waiting for the disk.
 	path string
 	w    *latestWriter
+	// restored lists the events an earlier process kept: already signalled, so not news
+	// to this process's annunciator.
+	restored map[string]bool
 }
 
 type sysSaved struct {
@@ -96,6 +99,10 @@ func (s *sysAlarms) Persist(path string) {
 		s.active[a.Code] = &a
 		s.event[a.Code] = true
 		s.eventReal[a.Code] = v.Real[a.Code]
+		if s.restored == nil {
+			s.restored = map[string]bool{}
+		}
+		s.restored[a.Code] = true
 	}
 	s.hist = append(s.hist, v.Hist...)
 	if v.Seq > s.seq {
@@ -122,6 +129,13 @@ func (s *sysAlarms) save() {
 		return
 	}
 	s.w.Put(b)
+}
+
+// Restored says whether code was kept by an earlier process and loaded at start.
+func (s *sysAlarms) Restored(code string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.restored[code]
 }
 
 // Flush waits up to d for the saved alarms to reach the disk.

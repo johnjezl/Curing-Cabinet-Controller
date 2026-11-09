@@ -445,12 +445,59 @@ func TestAfterADropNoBriefCloseAndTheBuzzerSounds(t *testing.T) {
 			t.Fatalf("buzzer silent %d s after a drop with a critical alarm standing", i+1)
 		}
 	}
-	for i := 0; i < 30; i++ {
+	// Once armed, the alarm that came while unarmed gets its fresh opening: one brief
+	// close, then open again, with the buzzer sounding throughout (defect 3, re-test).
+	before := a.Openings()
+	closes, wasClosed := 0, false
+	for i := 0; i < 45; i++ {
 		*clock = clock.Add(time.Second)
 		a.Tick(*clock, api.QualityOK)
-		if _, closed, buzz := a.State(); closed || !buzz {
-			t.Fatalf("after re-arming, with core still calling: closed %v buzzer %v", closed, buzz)
+		_, closed, buzz := a.State()
+		if !buzz {
+			t.Fatalf("buzzer silent after re-arming with a critical alarm standing")
 		}
+		if closed && !wasClosed {
+			closes++
+		}
+		wasClosed = closed
+	}
+	if closes != 1 || wasClosed || a.Openings() != before+1 {
+		t.Fatalf("after re-arming: %d brief closes, closed at the end %v, %d new openings; want 1, false, 1",
+			closes, wasClosed, a.Openings()-before)
+	}
+}
+
+// Defect 3, re-test: the restart-burst alarm a start raises was taken as old news on
+// the first tick and never reached the contact; only what an earlier process kept is.
+func TestRestartBurstAtStartIsNews(t *testing.T) {
+	for _, restored := range []bool{false, true} {
+		a, f, l, sys, clock := testAnn()
+		path := filepath.Join(t.TempDir(), "system-alarms.json")
+		if restored {
+			old := newSysAlarms(func() time.Time { return *clock }, func() bool { return true }, func(string, ...any) {})
+			old.Persist(path)
+			old.RaiseEvent(CodeRestartLoop, api.SevCritical, "t", "a")
+			old.Flush(3 * time.Second)
+		}
+		sys.Persist(path)
+		if !restored {
+			sys.RaiseEvent(CodeRestartLoop, api.SevCritical, "t", "a") // raised by this start
+		}
+		_ = f.Set(hal.OutAlarm, true) // core itself has nothing calling
+		before := a.Openings()
+		for i := 0; i < int((armDelay+edgeFor)/time.Second)+5; i++ {
+			a.Tick(*clock, api.QualityOK)
+			*clock = clock.Add(time.Second)
+		}
+		got := a.Openings() - before
+		if !restored && got != 1 {
+			t.Errorf("a restart burst raised at this start made %d fresh openings, want 1", got)
+		}
+		if restored && got != 0 {
+			t.Errorf("a burst an earlier process already signalled made %d openings again", got)
+		}
+		_ = l
+		sys.Flush(3 * time.Second)
 	}
 }
 

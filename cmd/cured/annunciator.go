@@ -91,6 +91,7 @@ type annunciator struct {
 	lastCoreEdges uint64
 	prevSys       map[string]bool
 	edgeUntil     time.Time
+	edgePending   bool // a new alarm came while unarmed; its brief close follows arming
 	openings      uint64
 	persist       func(openings uint64, closed bool) // keeps the count across restarts
 
@@ -125,7 +126,15 @@ func (a *annunciator) tick(now time.Time, temp api.Quality, hold bool) {
 	}
 	sysCall := a.sys.CallingCodes()
 	if a.prevSys == nil {
-		a.prevSys = sysCall // what calls at start is not news of this tick
+		// Only what an earlier process kept and already signalled is old news. A system
+		// alarm this start raised (the restart burst) is new, and must reach the contact
+		// (integration defect 3, re-test).
+		a.prevSys = map[string]bool{}
+		for code := range sysCall {
+			if a.sys.Restored(code) {
+				a.prevSys[code] = true
+			}
+		}
 	}
 	newEdge := false
 	if a.coreEdges != nil {
@@ -140,8 +149,19 @@ func (a *annunciator) tick(now time.Time, temp api.Quality, hold bool) {
 	}
 	a.prevSys = sysCall
 	// Not yet armed, the contact is open and may not close, not even briefly: health is
-	// not proven. The opening that follows arming carries the news.
-	if newEdge && !a.contactClosed && a.armed {
+	// not proven. A new alarm then waits, and gets its brief close and fresh opening as
+	// soon as the relay arms; otherwise every alarm raised in the arming window after a
+	// start (the restart itself, a power outage, a fault found at boot) reached a remote
+	// monitor as nothing (integration defect 3, re-test).
+	if newEdge && !a.contactClosed {
+		if a.armed {
+			a.edgeUntil = now.Add(edgeFor)
+		} else {
+			a.edgePending = true
+		}
+	}
+	if a.armed && a.edgePending {
+		a.edgePending = false
 		a.edgeUntil = now.Add(edgeFor)
 	}
 	inEdge := now.Before(a.edgeUntil)
