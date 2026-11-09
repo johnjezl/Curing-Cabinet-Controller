@@ -111,6 +111,9 @@ type Alarm struct {
 	// recipe), as opposed to a condition that is still there. A panel ranks live
 	// conditions above events.
 	Event bool `json:"event,omitempty"`
+	// Calling is true while an event still calls the alarm contact: a critical one until
+	// acknowledged, the restart burst for 30 minutes. Past that it is history-like news.
+	Calling bool `json:"calling,omitempty"`
 }
 
 // PhaseSpec is one stage of a cure recipe.

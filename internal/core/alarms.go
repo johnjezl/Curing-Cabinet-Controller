@@ -912,8 +912,12 @@ func (c *Core) updateBuzzer() {
 func (c *Core) activeList() []api.Alarm {
 	out := make([]api.Alarm, 0, len(c.al.order))
 	for _, code := range c.al.order {
-		a := c.al.active[code].a
+		aa := c.al.active[code]
+		a := aa.a
 		a.Event = isEventAlarm(code)
+		if a.Event { // the same rule as contactCalling, without its side effects
+			a.Calling = !a.Acked && (a.Severity == api.SevCritical || (a.Severity != api.SevInfo && c.t < aa.callUntil))
+		}
 		out = append(out, a)
 	}
 	// Most severe first, then oldest.

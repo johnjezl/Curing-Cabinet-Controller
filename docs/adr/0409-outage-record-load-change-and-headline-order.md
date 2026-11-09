@@ -85,3 +85,15 @@ Status: accepted. Fixes integration defects 6, 8 and 9. Amends ADR 0107 and ADR 
   or close within 10 min before it) is never a load change, and the event says to check the scale. Until a step is
   confirmed the loss figure stays at its value before the step. Without a door switch a glitch that holds more than
   10 min at a new level is still taken as a load. `TestScaleGlitchDoesNotRebaseTheLoss` holds this.
+
+## Revision after the third re-test, on the rig (defect 9; 3, 6, 8 and 12 passed)
+At the end of the cure a restart-burst alarm 35 minutes old, no longer calling the contact, kept the headline over
+"Recipe finished", which was defect 3's original complaint; the previous revision had ranked every unacknowledged
+critical event over newer events. And a new open door sat behind a critical someone had already acknowledged.
+- Alarms carry `calling`: an event still calling the contact (a critical one until acknowledged, the restart burst for
+  30 minutes). Only those rank above other events; one that has stopped calling ranks with the rest, newest first.
+- Live alarms nobody has acknowledged come before live alarms already acknowledged, whatever their severity: an
+  acknowledged critical is seen and known, a new open door is not.
+Order: unacknowledged live critical, open door, unacknowledged live warnings, acknowledged live alarms, critical events
+still calling, other events newest first, standing information. Silences' starts and ends are also written to the
+system journal. `TestHeadlineRanksLiveConditionsOverEvents` holds this.

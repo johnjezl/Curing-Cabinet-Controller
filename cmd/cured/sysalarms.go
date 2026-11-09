@@ -335,6 +335,7 @@ func (s *sysAlarms) Active() []api.Alarm {
 	for code, a := range s.active {
 		x := *a
 		x.Event = s.event[code]
+		x.Calling = x.Event && s.calls(a)
 		out = append(out, x)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })

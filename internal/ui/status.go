@@ -33,25 +33,29 @@ type Status struct {
 }
 
 // sortAlarms puts first what an operator must act on now: live critical conditions,
-// then an open door (usually the cause of whatever else is out), then live warnings,
-// then critical past events nobody has acknowledged yet, then other past events newest
-// first (the end of a cure is news; an old restart burst already seen is not), and
-// standing information last. An old event must never headline over a live excursion
-// (integration defect 9), and a critical one must not hide behind a newer warning
-// until someone has seen it (its re-test). Within a rank, what nobody has acknowledged
-// comes first, newest first: the latest development is usually the identified cause
-// (HEAT_STUCK_ON after the temperature alarm it explains), and on the rig an older live
-// critical kept the headline over a stuck heater, outputs down and a power outage.
+// then an open door (usually the cause of whatever else is out), then live warnings, all
+// unacknowledged; then live alarms already acknowledged; then critical past events still
+// calling the contact (unseen); then other past events, newest first (the end of a cure is
+// news; a restart burst that stopped calling half an hour ago is not); and standing
+// information last. An old event never headlines over a live excursion (integration
+// defect 9). A critical event must not hide behind a newer warning while it still calls
+// (first re-test), and one that has stopped calling must not hide the end of the cure
+// (third re-test, on the rig). A new open door is not hidden behind a critical someone has
+// already acknowledged (third re-test). Within a rank, newest first: the latest
+// development is usually the identified cause (HEAT_STUCK_ON after the temperature alarm
+// it explains).
 func sortAlarms(in []api.Alarm) []api.Alarm {
 	out := append([]api.Alarm(nil), in...)
 	rank := func(a api.Alarm) int {
 		switch {
-		case a.Event && a.Severity == api.SevCritical && !a.Acked:
-			return 3
-		case a.Event:
+		case a.Event && a.Severity == api.SevCritical && a.Calling:
 			return 4
-		case a.Severity == api.SevInfo:
+		case a.Event:
 			return 5
+		case a.Severity == api.SevInfo:
+			return 6
+		case a.Acked:
+			return 3
 		case a.Severity == api.SevCritical:
 			return 0
 		case a.Code == "DOOR_OPEN":

@@ -185,9 +185,11 @@ func TestHeadlineRanksLiveConditionsOverEvents(t *testing.T) {
 	}
 	seen := al("OUTPUTS_DROPPED", api.SevCritical, true, 0)
 	seen.Acked = true
+	burst := al("CONTROLLER_RESTART_LOOP", api.SevCritical, true, time.Hour)
+	burst.Calling = true // still calling the contact
 	got := sortAlarms([]api.Alarm{
 		seen,
-		al("CONTROLLER_RESTART_LOOP", api.SevCritical, true, time.Hour),
+		burst,
 		al("TEMP_LOW", api.SevWarning, false, 2*time.Hour),
 		al("DOOR_OPEN", api.SevWarning, false, 3*time.Hour),
 		al("TEMP_HIGH_CRITICAL", api.SevCritical, false, 4*time.Hour),
@@ -212,5 +214,19 @@ func TestHeadlineRanksLiveConditionsOverEvents(t *testing.T) {
 	})
 	if got[0].Code != "HEAT_STUCK_ON" {
 		t.Fatalf("headline %s, want the newest unacknowledged critical", got[0].Code)
+	}
+	// Third re-test, on the rig: a restart burst that stopped calling half an hour ago
+	// kept the headline over the end of the cure; and a new open door was hidden behind a
+	// critical someone had already acknowledged.
+	burst.Calling = false
+	got = sortAlarms([]api.Alarm{burst, al("CURE_FINISHED", api.SevInfo, true, 5*time.Hour)})
+	if got[0].Code != "CURE_FINISHED" {
+		t.Fatalf("headline %s: a burst no longer calling must not hide the end of the cure", got[0].Code)
+	}
+	ackedCrit := al("SENSOR_CLIMATE_FAULT", api.SevCritical, false, 0)
+	ackedCrit.Acked = true
+	got = sortAlarms([]api.Alarm{ackedCrit, al("DOOR_OPEN", api.SevWarning, false, time.Hour)})
+	if got[0].Code != "DOOR_OPEN" {
+		t.Fatalf("headline %s: a new open door must lead over an acknowledged critical", got[0].Code)
 	}
 }

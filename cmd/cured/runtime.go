@@ -447,7 +447,9 @@ func shutdownStuck() {
 // traceBoot puts core's boot and outage records in the journal, which is the only
 // place outside core's own files to see whether the previous stop counted as clean.
 func traceBoot(e core.Event) {
-	if e.Type == core.EvBoot || e.Type == core.EvOutage {
+	// Silences are also put in the system journal: an operator or a test reading the
+	// journal could not see when one began or ended (re-test of defect 12).
+	if e.Type == core.EvBoot || e.Type == core.EvOutage || e.Type == core.EvSilence {
 		logfJ("<5>cured: core event %s: %s", e.Type, e.Msg)
 	}
 }
