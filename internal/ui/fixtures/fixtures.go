@@ -370,6 +370,14 @@ func All() []Fixture {
 				{Output: "humid", Kind: "normal", Reason: "at or over setpoint"}}
 			s.Active = []api.Alarm{alarm("HEAT_STUCK_ON", api.SevCritical, "Heater appears stuck on", "Switch off or disconnect the heater at its supply.", 40*time.Minute, 17.9, 13, "°C")}
 		})},
+		{Name: "compressor-failed", Make: with(func(s *api.Snapshot) {
+			s.Temp = good(19.8)
+			s.Outputs.Cool = true
+			s.Outputs.Status = []api.OutputStatus{{Output: "cool", On: true, Kind: "failed", Reason: "called for, but the cabinet is not cooling: check the compressor"},
+				{Output: "heat", Kind: "normal", Reason: "at or over setpoint"},
+				{Output: "humid", Kind: "normal", Reason: "at or over setpoint"}}
+			s.Active = []api.Alarm{alarm("COOL_NO_EFFECT", api.SevCritical, "Compressor called for but the cabinet is not cooling", "Check the compressor and its relay, and for ice on the coil.", 50*time.Minute, 19.8, 13, "°C")}
+		})},
 		{Name: "simulated", Make: with(func(s *api.Snapshot) { s.Health.Simulated, s.Health.SpeedFactor = true, 60 })},
 		{Name: "simulated-alarm", Make: with(func(s *api.Snapshot) {
 			s.Health.Simulated, s.Health.SpeedFactor = true, 60

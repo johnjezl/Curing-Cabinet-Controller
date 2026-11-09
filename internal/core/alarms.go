@@ -596,10 +596,16 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	t30 := c.tRing[len(c.tRing)-1] // the reading about 30 min ago
 	noDoor := c.lastDoorT == 0 || t-c.lastDoorT > 3600
 	coilWorks := c.lastRunDrop >= 0.3 || c.lastRunDewDrop >= 0.5
-	held := true // in band for the last half hour, so not recovering from an excursion
+	// Held at setpoint over the last half hour, so not recovering from an excursion: the
+	// half hour's average within 1 °C and not coming down steadily. Every sample within
+	// 1 °C was asked before, and a compressor cycling against a heater stuck on swings the
+	// air 2 °C either way, so at 24 °C the heater was never named (re-test of defect 1).
+	mean := 0.0
 	for _, v := range c.tRing {
-		held = held && math.Abs(v-set.TempC) < 1
+		mean += v
 	}
+	mean /= float64(len(c.tRing))
+	held := math.Abs(mean-set.TempC) < 1 && ts-t30 > -0.5
 	base := tOK && quiet && t-c.lastHeatOn >= 1800 && t-c.bootT >= 2400 && coilWorks && !c.coolFailing
 	// Either the compressor cannot hold the air down, or it holds it only by running far
 	// more than this cabinet's own history at this setpoint (24 h, ADR 0111's figure):
@@ -745,13 +751,15 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	case !spell:
 		c.defrostPeak, c.defrostHeated, c.defrostSeen = 0, false, false
 	case c.chT.quality == api.QualityOK:
-		// Only a defrost that began with the air in band, from a compressor that cools:
-		// a cabinet already warm from a dead compressor or a hot room says nothing.
-		if ctl.heatOn || c.coolFailing || ctl.defrostT0 > set.TempC+c.st.Limits.TempHighDelta {
+		// Not with a compressor shown not to cool: its cabinet is warm already. A cabinet
+		// already warm from a stuck heater still counts (on the rig one at 26 to 29.6 °C was
+		// missed when the defrost had to begin in band), as long as the defrost itself
+		// warmed the air.
+		if ctl.heatOn || c.coolFailing {
 			c.defrostHeated = true
 		}
 		c.defrostPeak = math.Max(c.defrostPeak, c.tF.v)
-		if !c.defrostSeen && !c.defrostHeated && c.defrostPeak > c.st.Limits.AbsTempHighC {
+		if !c.defrostSeen && !c.defrostHeated && c.defrostPeak > c.st.Limits.AbsTempHighC && c.defrostPeak-ctl.defrostT0 >= 1 {
 			c.defrostSeen = true
 			c.raise(CodeDefrostHot, c.defrostPeak, c.st.Limits.AbsTempHighC)
 		}

@@ -159,3 +159,25 @@ Limits that remain:
   (up to 0.73), and the defrost's first 5 min rise separates it on only 4 to 16 of 36 plants.
 - Over 30 h a closed compressor relay's alarm clears before the repair on 9 to 14 of 36 plants at 4 to 13 °C, as the
   coil ices and the air warms back.
+
+## Third amendment in the next fix round (second rig re-test)
+Everything else passed, held until repair, with no false accusation in hot or cold rooms; a heater stuck at 24 °C was
+named within 6 h in only one run of three after 20 h at setpoint, and the HEAT chip meanwhile said "this cabinet needs
+cooling overall, so the room brings it back", blaming a room that was normal. The rig data showed why: before the
+fault the compressor never ran and the heater ran 13 % of the time; after it, the compressor ran 40 to 80 % with the
+heater commanded off, as the rule looks for, but cycling against the heater it swung the air 22 to 26 °C, and "held"
+asked every 5-min sample of the half hour to be within 1 °C.
+- "Held" is now the half hour's average within 1 °C and the air not coming down steadily (it exists only to leave out
+  a cabinet recovering from an excursion). 36-plant sweep, 24 h: heater stuck named at 24 °C on 32 of 36 plants (was
+  26), at 13 °C 32 (was 30); HEAT_STUCK_ON wrongly in a warmer room or after a warm load unchanged (0 to 4 of 36). Base
+  plant: named 94 min after a heater sticks 20 h into ferment, 121 min after one 4 h in.
+- The HEAT chip no longer says the room brings the air back; it says the controller's average still calls for cooling.
+- DEFROST_OVERHEAT no longer needs the defrost to begin in band (on the rig a cabinet already at 26 to 29.6 °C from a
+  stuck heater was left out): it needs the defrost itself to have warmed the air 1 °C, and no compressor shown not to
+  cool. 30 h sweep: on every heater stuck at 24 °C, 10 of 36 at 13 °C, and on no healthy plant, room or dead compressor.
+- A compressor shown not to cool reads COOL FAILED on its chip, not COOL ON; a defrost cut short while it is failing is
+  not counted as ice.
+Limit: a heater stuck in the first hour of a heating phase, before this setpoint's cooling need has been learned, is not
+named as HEAT_STUCK_ON; it shows as DEFROST_OVERHEAT at the next defrost (11 h on the base plant). The compressor's
+5-min rests separate it from a warmer room only at 24 °C (11 of 36 plants, 1 false), so they are not used.
+`TestHeaterStuckAtAHeatingSetpoint` and `TestFailedCompressorChipSaysSo` hold this.

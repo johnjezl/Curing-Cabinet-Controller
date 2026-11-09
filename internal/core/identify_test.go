@@ -166,3 +166,28 @@ func TestNoSensorAccusedAfterARoomChangeOrARepair(t *testing.T) {
 		t.Error("a reading drifting low at 1 °C/h was not caught in 12 h")
 	})
 }
+
+// Re-test of defect 1 on the rig: at 24 °C a compressor cycling against a heater stuck on
+// swings the air 2 °C either way, and the heater was named in only one run of three after
+// 20 h at setpoint. A heater stuck during the first hour, before anything is known about
+// this setpoint, is not named, but the air passing 30 °C at the next defrost is alarmed.
+func TestHeaterStuckAtAHeatingSetpoint(t *testing.T) {
+	for _, c := range []struct {
+		at, within float64 // hours
+		want       string
+	}{{20, 6, "HEAT_STUCK_ON"}, {4, 6, "HEAT_STUCK_ON"}, {1, 14, "DEFROST_OVERHEAT"}} {
+		r := newRun(t)
+		r.SetPoint(24, 90, 1.0)
+		r.Advance(c.at * 3600)
+		r.Evs = nil
+		r.Plant.Inject(sim.DevHeat, sim.FaultRelayStuckOn, 0)
+		r.Advance(c.within * 3600)
+		found := false
+		for _, e := range r.Evs {
+			found = found || (e.Kind == "alarm" && e.Code == c.want)
+		}
+		if !found {
+			t.Errorf("heater stuck %.0f h into 24 °C: no %s within %.0f h", c.at, c.want, c.within)
+		}
+	}
+}

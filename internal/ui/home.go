@@ -524,6 +524,10 @@ func (p *Panel) drawOutputs(c *Canvas, r image.Rectangle, holds bool) {
 		case kind == "stuck":
 			c.Round(b, 4, colCrit)
 			c.Text(b.Inset(2), ch.label+" STUCK ON", Style{Font: FontBold, Size: size, Color: colText, H: Center, MinSize: 11})
+		case kind == "failed":
+			// Called for and shown not to work (COOL_NO_EFFECT): not the plain command.
+			c.Round(b, 4, colCrit)
+			c.Text(b.Inset(2), ch.label+" FAILED", Style{Font: FontBold, Size: size, Color: colText, H: Center, MinSize: 11})
 		case !ch.on && kind == "fault":
 			c.Round(b, 4, colCrit)
 			c.Text(b.Inset(2), ch.label+" FAULT", Style{Font: FontBold, Size: size, Color: colText, H: Center, MinSize: 12})

@@ -76,8 +76,9 @@ type OutputStatus struct {
 	Reason string `json:"reason"`
 	// Kind is "normal", "hold" (a timer or interlock is stopping it), "fault" (bad
 	// data or a failed part is stopping it), "unknown" (outputs cannot be written, so
-	// the real state is not known) or "stuck" (the cabinet's response shows the relay
-	// is closed although it is commanded open; On is then true).
+	// the real state is not known), "stuck" (the cabinet's response shows the relay
+	// is closed although it is commanded open; On is then true) or "failed" (called for
+	// and shown not to work, as a compressor that does not cool).
 	Kind string `json:"kind"`
 }
 

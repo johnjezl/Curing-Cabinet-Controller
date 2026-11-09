@@ -1385,7 +1385,7 @@ func (c *Core) outputStatus() []api.OutputStatus {
 	case ctl.heatDemand > 0:
 		heat = st(he, false, "normal", fmt.Sprintf("%.1f °C under setpoint: on %.0f %% of each minute, off between pulses", set.TempC-c.tF.v, 100*ctl.heatDemand))
 	case ctl.tI > 0:
-		heat = st(he, false, "normal", fmt.Sprintf("%.1f °C under setpoint: this cabinet needs cooling overall, so the room brings it back", set.TempC-c.tF.v))
+		heat = st(he, false, "normal", fmt.Sprintf("%.1f °C under setpoint: the controller's average still calls for cooling here, so no heat yet", set.TempC-c.tF.v))
 	default:
 		heat = st(he, false, "normal", fmt.Sprintf("%.1f °C under setpoint: the average of the last few minutes needs no heat yet", set.TempC-c.tF.v))
 	}
@@ -1420,8 +1420,8 @@ func (c *Core) outputStatus() []api.OutputStatus {
 		hum = st(hu, false, "normal", fmt.Sprintf("%.0f %% under setpoint: the average of the last few minutes needs no pulse yet", set.RHPct-c.rhF.v))
 	}
 	// What the cabinet's response proves overrides what was commanded.
-	if c.al.active[CodeCoolFail] != nil && ctl.comp.on {
-		cool = st(co, true, "fault", "running, but the cabinet is not cooling: check the compressor")
+	if c.al.active[CodeCoolFail] != nil {
+		cool = st(co, ctl.comp.on, "failed", "called for, but the cabinet is not cooling: check the compressor")
 	}
 	if c.al.active[CodeCoolStuck] != nil {
 		cool = st(co, true, "stuck", "relay appears stuck closed: the air falls with the compressor commanded off")

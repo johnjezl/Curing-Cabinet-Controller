@@ -521,7 +521,7 @@ func (c *Core) defrostStep(set api.Setpoints, tOK bool) {
 			c.event(Event{Type: EvDefrost, Msg: "end: " + reason, Dur: t - ctl.defrostStart})
 
 			// A heater shown stuck on explains the air reaching its limit: that is not ice.
-			if over && t-ctl.defrostStart < dur/2 && !c.heatStuck {
+			if over && t-ctl.defrostStart < dur/2 && !c.heatStuck && !c.coolFailing { // nor a compressor that does not cool
 				// Cut short: the ice is probably still there, so try again sooner,
 				// and say so if it keeps happening.
 				c.defrostShortN++

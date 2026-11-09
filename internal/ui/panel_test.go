@@ -743,6 +743,15 @@ func TestOutputReasonsAreShown(t *testing.T) {
 	mustContain(t, auditHome(h), "locked off while a reading is in doubt")
 }
 
+// Re-test of defect 1: during a compressor failure the COOL chip read a plain "COOL ON".
+func TestFailedCompressorChipSaysSo(t *testing.T) {
+	f, _ := fixtures.Find("compressor-failed")
+	h := uitest.ForFixture(f, ui.Config{})
+	a := auditHome(h)
+	mustContain(t, a, "COOL FAILED")
+	mustNotContain(t, a, "COOL ON")
+}
+
 func TestSetpointNeedsSaveAndCancelDiscards(t *testing.T) {
 	h := idleManual(t)
 	tap(t, h, "home.temp")
