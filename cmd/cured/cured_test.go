@@ -284,7 +284,7 @@ func TestPlantStateRoundTrip(t *testing.T) {
 	if q.SaveState() != s {
 		t.Fatalf("round trip differs\n%+v\n%+v", q.SaveState(), s)
 	}
-	if got := activeFaults(s); len(got) != 1 || got[0] != "temp:offset" {
+	if got := activeFaults(s); len(got) != 1 || got[0] != "temp:offset 3" { // with its value
 		t.Fatalf("faults %v", got)
 	}
 	q.Step(10) // must run
@@ -544,12 +544,25 @@ func TestSimctlRepliesSayWhatHappened(t *testing.T) {
 		{[]string{"repair", "rh"}, `"repaired":"rh:stuck"`},
 		{[]string{"fault", "humidifier", "empty"}, `"latent":"no effect until the humidifier is called`},
 		{[]string{"repair", "humidifier"}, `"repaired":"humidifier:empty"`},
+		// Fourth re-test: a fault masked by another, and swapping one value the
+		// controller rejects for another, were reported as if they acted.
+		{[]string{"fault", "fan", "stall"}, `"injected":"fan:stall"`},
+		{[]string{"fault", "tach", "stuck"}, `"latent":"no effect while fan:stall is injected`},
+		{[]string{"fault", "duct", "blocked"}, `"latent":"no effect`},
+		{[]string{"repair", "all"}, `"repaired"`},
+		{[]string{"fault", "temp", "range", "70"}, `"injected":"temp:range"`},
+		{[]string{"fault", "temp", "range", "1000"}, "refused: temp range 1000 would leave the reading exactly where temp range 70"},
+		{[]string{"repair", "temp"}, `"repaired":"temp:range"`},
+		{[]string{"fault", "temp", "offset", "100"}, `"note":"this puts the reading beyond what the controller accepts`},
+		{[]string{"fault", "temp", "offset", "90"}, "refused: temp offset 90 would leave the reading exactly where"},
+		{[]string{"fault", "temp", "offset", "-2"}, `"changed":"temp:offset 100 -\u003e -2"`},
+		{[]string{"fault", "temp", "drift", "x"}, "give a plain number"},
 		{[]string{"fault", "temp", "drift", "abc"}, `"abc" is not a number`},
 		{[]string{"fault", "thermo", "drift", "1"}, "devices: "},
 		{[]string{"fault", "temp", "melt"}, "faults: "},
 		{[]string{"fault", "temp", "range", "20"}, "refused"},
 		{[]string{"fault", "heat", "relay-stuck-on"}, `"injected":"heat:relay-stuck-on"`},
-		{[]string{"repair", "all"}, `"repaired":["heat:relay-stuck-on","temp:drift"]`},
+		{[]string{"repair", "all"}, `"repaired":["heat:relay-stuck-on","temp:offset"]`},
 		{[]string{"repair", "all"}, "no fault was injected"},
 	} {
 		if got := call(c.args...); !strings.Contains(got, c.want) {

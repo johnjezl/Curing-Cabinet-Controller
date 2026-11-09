@@ -23,6 +23,12 @@ type latestWriter struct {
 	logf  func(string, ...any)
 	write func(path string, b []byte) error // writeFileSync when made
 
+	// Slow writes are logged at most once a minute, with how many and the longest: a
+	// slow card otherwise filled the journal (1672 lines in 85 min on the rig).
+	slowN    int
+	slowMax  time.Duration
+	slowLast time.Time
+
 	mu      sync.Mutex
 	pending []byte
 	put     uint64 // values handed over
@@ -60,7 +66,14 @@ func (w *latestWriter) loop() {
 		start := time.Now()
 		err := w.write(w.path, b)
 		if d := time.Since(start); d >= slowWrite {
-			w.logf("<4>cured: slow write: %s took %.1f s", w.path, d.Seconds())
+			w.slowN++
+			if d > w.slowMax {
+				w.slowMax = d
+			}
+			if time.Since(w.slowLast) >= time.Minute {
+				w.logf("<4>cured: slow write: %s, %d writes over %.0f s since the last report, longest %.1f s", w.path, w.slowN, slowWrite.Seconds(), w.slowMax.Seconds())
+				w.slowN, w.slowMax, w.slowLast = 0, 0, time.Now()
+			}
 		}
 		if err != nil {
 			w.logf("<4>cured: saving %s: %v", w.path, err)

@@ -350,3 +350,38 @@ func TestLatentFaultsAreNamed(t *testing.T) {
 		t.Error("with the heater on, stuck off acts now and stuck on waits")
 	}
 }
+
+// Defect 5, fourth re-test: a fault masked by another, and two out-of-range values,
+// changed nothing and were reported as acting.
+func TestMaskedFaultsAndSameReadingsAreNamed(t *testing.T) {
+	pl := NewPlant(BasePlant())
+	for i := 0; i < 120; i++ {
+		pl.Step(1) // the sensor's own state settles
+	}
+	pl.FanDuty, pl.CmdCool, pl.CmdHumid = 0.5, true, true
+	pl.Inject(DevFan, FaultStall, 0)
+	for _, c := range []struct {
+		d Device
+		k FaultKind
+	}{{DevTach, FaultStuck}, {DevDuct, FaultBlocked}, {DevAir, FaultStuck}, {DevAir, FaultDrift}} {
+		if pl.Latent(c.d, c.k, 0) == "" {
+			t.Errorf("%s %s behind a stalled fan: not named latent", c.d, c.k)
+		}
+	}
+	if pl.Latent(DevAir, FaultOffset, 1) != "" {
+		t.Error("an air offset shows even with the fan stalled")
+	}
+	pl.Inject(DevCool, FaultRelayStuckOff, 0)
+	if pl.Latent(DevCompressor, FaultNoCool, 0) == "" {
+		t.Error("no-cool behind a compressor relay stuck open: not named latent")
+	}
+	if !pl.SameReading(DevTemp, FaultRange, 70, 1000) {
+		t.Error("two temperature range values read the same")
+	}
+	if !pl.SameReading(DevTemp, FaultOffset, 100, 90) || pl.SameReading(DevTemp, FaultOffset, 100, -2) {
+		t.Error("temperature offsets 100 and 90 both reject the reading; -2 does not")
+	}
+	if rh := pl.sRH + pl.P.RHBias; !pl.SameReading(DevRH, FaultOffset, 95, 85) || pl.SameReading(DevRH, FaultOffset, 95, -5) {
+		t.Errorf("at %.0f %%RH offsets 95 and 85 both clamp at 100; -5 does not", rh)
+	}
+}

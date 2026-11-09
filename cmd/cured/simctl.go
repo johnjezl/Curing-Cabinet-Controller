@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -99,9 +100,17 @@ func argFloat(a []string, i int) (float64, error) {
 	}
 	v, err := strconv.ParseFloat(a[i], 64)
 	if err != nil {
-		return 0, fmt.Errorf("%q is not a number", a[i])
+		return 0, fmt.Errorf("%q is not a number; give a plain number such as -0.5", a[i])
 	}
 	return v, nil
+}
+
+// num writes a value as typed, without exponents for ordinary sizes.
+func num(v float64) string {
+	if math.Abs(v) < 1e9 {
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	}
+	return strconv.FormatFloat(v, 'g', -1, 64)
 }
 
 // names lists a table's keys, for a refusal that says what would work.
@@ -188,8 +197,12 @@ func (s *simState) handle(a []string) (any, error) {
 				// Re-freezing a stuck reading, or an offset it already has, changes nothing.
 				refused = fmt.Errorf("%s %s is already injected with this value, so this would change nothing; repair %s first to start it again", d, k, d)
 				return
+			case prev == k && s.pl.SameReading(d, k, s.pl.FaultParam(d), p):
+				refused = fmt.Errorf("%s %s %s would leave the reading exactly where %s %s %s already puts it, beyond what the controller accepts; repair %s first to start again",
+					d, k, num(p), d, k, num(s.pl.FaultParam(d)), d)
+				return
 			case prev == k:
-				reply["changed"] = fmt.Sprintf("%s:%s %g -> %g", d, k, s.pl.FaultParam(d), p)
+				reply["changed"] = fmt.Sprintf("%s:%s %s -> %s", d, k, num(s.pl.FaultParam(d)), num(p))
 			case prev != sim.FaultNone:
 				reply["replaced"] = d.String() + ":" + prev.String() // one fault per device
 			}
@@ -207,6 +220,9 @@ func (s *simState) handle(a []string) (any, error) {
 			s.pl.Inject(d, k, p)
 			if why := s.pl.Latent(d, k, p); why != "" {
 				reply["latent"] = why
+			}
+			if k == sim.FaultOffset && s.pl.OffsetActsAsRange(d, p) {
+				reply["note"] = "this puts the reading beyond what the controller accepts, so it acts as a range fault"
 			}
 			s.saveCheckpoint(false)
 		})

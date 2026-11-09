@@ -257,6 +257,9 @@ func activeFaults(s sim.PlantState) []string {
 				name = fn
 			}
 		}
+		if v := s.FaultParams[d]; v != 0 {
+			name += " " + num(v) // the value it was injected with
+		}
 		out = append(out, dn+":"+name)
 	}
 	sort.Strings(out)

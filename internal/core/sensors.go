@@ -214,6 +214,9 @@ func (e *ema) add(x, dt float64) float64 {
 	}
 	a := dt / (e.tau + dt)
 	e.v += a * (x - e.v)
+	if math.Abs(e.v) < 1e-9 && x == 0 {
+		e.v = 0 // decayed to nothing: zero, not a denormal like 1E-323 in the record
+	}
 	return e.v
 }
 

@@ -154,14 +154,14 @@ func (pl *Plant) CheckInjection(d Device, k FaultKind, param float64, hasParam b
 	switch d {
 	case DevTemp:
 		driftUnit, offsetUnit = "°C per virtual hour", "°C"
-		inRange, rangeEg = func(v float64) bool { return v >= -20 && v <= 60 }, "below -20 or above 60 °C (e.g. 'temp range 85')"
+		inRange, rangeEg = func(v float64) bool { return v >= -20 && v <= 60 }, "below -20 or above 60 °C, where the controller rejects a reading (e.g. 'temp range 85')"
 	case DevRH:
 		driftUnit, offsetUnit, driftEg, offsetEg = "%RH per virtual hour", "%RH", "2", "5"
-		inRange, rangeEg = func(v float64) bool { return v >= 0.5 && v <= 100 }, "below 0.5 or above 100 % (e.g. 'rh range 101')"
+		inRange, rangeEg = func(v float64) bool { return v >= 0.5 && v <= 100 }, "below 0.5 or above 100 %, where the controller rejects a reading (e.g. 'rh range 101')"
 	case DevAir:
 		minDrift, minOffset = 0.001, 0.01
 		driftUnit, offsetUnit, driftEg, offsetEg = "share of the reading per virtual hour", "m/s", "-0.05", "0.2"
-		inRange, rangeEg = func(v float64) bool { return v >= -0.1 && v <= 8 }, "below -0.1 or above 8 m/s (e.g. 'air range 40')"
+		inRange, rangeEg = func(v float64) bool { return v >= -0.1 && v <= 8 }, "below -0.1 or above 8 m/s, where the controller rejects a reading (e.g. 'air range 40')"
 	case DevScale:
 		minDrift, minOffset = 1, 1
 		driftUnit, offsetUnit, driftEg, offsetEg = "g per virtual hour", "g", "-50", "100"
@@ -179,7 +179,7 @@ func (pl *Plant) CheckInjection(d Device, k FaultKind, param float64, hasParam b
 		// all, which from outside is an injection that did nothing (re-test of defect 5).
 		return need(fmt.Sprintf("the share of samples that spike, at least 0.2 and at most 1; fewer are filtered out with no visible sign (e.g. '%s spike 0.3')", d), param >= 0.2 && param <= 1)
 	case k == FaultRange:
-		return need("a value the sensor cannot report: "+rangeEg+"; a normal value would only freeze the reading, which is 'stuck'", !inRange(param))
+		return need("a value the controller rejects as impossible: "+rangeEg+"; a value it accepts would only freeze the reading, which is 'stuck'", !inRange(param))
 	case k == FaultStuck && d == DevDoorSwitch:
 		return need("the state it sticks in, 0 (closed) or 1 (open)", param == 0 || param == 1)
 	case hasParam:
@@ -210,6 +210,15 @@ func (pl *Plant) Latent(d Device, k FaultKind, param float64) string {
 		return "no effect until the humidifier is called: it is off now"
 	case (d == DevFan && k == FaultStall || d == DevDuct && k == FaultBlocked) && pl.FanDuty <= 0:
 		return "no effect until the fan runs: it is stopped now"
+	// A fault behind another that already pins what it would change shows nothing until
+	// that one is repaired (re-test of defect 5).
+	case pl.Faults.kind(DevFan) == FaultStall && (d == DevTach && k == FaultStuck || d == DevDuct && k == FaultBlocked ||
+		d == DevAir && (k == FaultStuck || k == FaultDrift)):
+		return "no effect while fan:stall is injected: the rpm and the airflow already read 0; repair the fan to see it"
+	case d == DevCompressor && k == FaultNoCool && pl.Faults.kind(DevCool) == FaultRelayStuckOff:
+		return "no effect while cool:relay-stuck-off is injected: the compressor never runs; repair cool to see it"
+	case d == DevHumidifier && k == FaultEmpty && pl.Faults.kind(DevHumid) == FaultRelayStuckOff:
+		return "no effect while humid:relay-stuck-off is injected: the humidifier never runs; repair humid to see it"
 	case d == DevDoorSwitch && k == FaultStuck && (param == 1) == pl.DoorIsOpen:
 		if pl.DoorIsOpen {
 			return "no effect until the door is closed: the switch already reads open"
@@ -217,6 +226,57 @@ func (pl *Plant) Latent(d Device, k FaultKind, param float64) string {
 		return "no effect until the door is opened: the switch already reads closed"
 	}
 	return ""
+}
+
+// SameReading says whether replacing the value of fault k on d by another would leave
+// the reading exactly where it is: two range values or two offsets that both put it
+// beyond what the controller accepts (or both clamp humidity at the same end).
+func (pl *Plant) SameReading(d Device, k FaultKind, old, new float64) bool {
+	p := &pl.P
+	out := func(v float64, lo, hi float64) int {
+		switch {
+		case v < lo:
+			return -1
+		case v > hi:
+			return 1
+		}
+		return 0
+	}
+	switch {
+	case k == FaultRange:
+		return true // both are values the controller rejects: CheckInjection allows no other
+	case k == FaultOffset && d == DevTemp:
+		v := pl.sT + p.TBias
+		a, b := out(v+old, -20, 60), out(v+new, -20, 60)
+		return a != 0 && b != 0
+	case k == FaultOffset && d == DevRH:
+		v := pl.sRH + p.RHBias
+		a, b := out(v+old, 0.5, 99.999), out(v+new, 0.5, 99.999) // clamped at 100, rejected under 0.5
+		return a != 0 && a == b
+	case k == FaultOffset && d == DevAir:
+		v := pl.FanV * (1 + p.AirBiasPct/100)
+		a, b := out(v+old, -0.1, 8), out(v+new, -0.1, 8)
+		return a != 0 && b != 0
+	}
+	return false
+}
+
+// OffsetActsAsRange says whether an offset puts the reading beyond what the controller
+// accepts, so that it behaves as a range fault.
+func (pl *Plant) OffsetActsAsRange(d Device, off float64) bool {
+	p := &pl.P
+	switch d {
+	case DevTemp:
+		v := pl.sT + p.TBias + off
+		return v < -20 || v > 60
+	case DevRH:
+		v := pl.sRH + p.RHBias + off
+		return v < 0.5 || v >= 100
+	case DevAir:
+		v := pl.FanV*(1+p.AirBiasPct/100) + off
+		return v < -0.1 || v > 8
+	}
+	return false
 }
 
 // FaultParam is the value the current fault on d was injected with.

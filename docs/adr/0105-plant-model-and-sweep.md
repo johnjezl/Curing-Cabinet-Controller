@@ -83,3 +83,15 @@ disk (written by the same newest-only writer as ADR 0408's files), or the reply 
 repair made during a slow card write could be undone by a crash.
 `TestInjectionParametersMustMeanSomething`, `TestLatentFaultsAreNamed`, `TestSimctlRepliesSayWhatHappened` and
 `TestSaturatedScaleIsAFaultNotALoad` hold this.
+
+Fifth amendment, after the fourth re-test (on the rig): about 200 probes; drift and stuck passed, latent notes held, and
+repairs survived kills. Two classes were still accepted with no effect and no word: a fault behind another that already
+pins what it would change (tach stuck, duct blocked, air stuck or drift while fan:stall is injected; compressor no-cool
+behind cool:relay-stuck-off; humidifier empty behind humid:relay-stuck-off), now reported as latent and naming the fault
+that masks it; and a value swapped for another that leaves the reading where it is (two range values; two offsets that
+both put temperature or air past what the controller accepts, or both clamp humidity at the same end), now refused. An
+offset that puts the reading past what the controller accepts says it acts as a range fault. Range refusals name the
+controller's limits, not the sensor's; "not a number" says what would work; values print without exponents; the fault
+list shows each fault's value. `TestMaskedFaultsAndSameReadingsAreNamed` and `TestSimctlRepliesSayWhatHappened` hold this.
+Also from that run: slow writes are logged at most once a minute with a count and the longest (1672 lines in 85 min
+before), and a filtered reading that has decayed to nothing reads 0, not a denormal like 1E-323.
