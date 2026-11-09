@@ -1486,3 +1486,45 @@ func TestNewAlarmCountedAndSilenceEndRecordedAndRecoveredSensorNotStuck(t *testi
 		}
 	}
 }
+
+// Re-test of defect 6: a crash of 2.7 s was recorded as 45 s, dated from the last
+// per-minute record. A later sign of life from outside the journal narrows it.
+func TestCrashDatedFromTheLastSignOfLife(t *testing.T) {
+	for _, hint := range []bool{false, true} {
+		fs := core.NewMemFS()
+		pl := sim.NewPlant(sim.BasePlant())
+		clk := sim.NewClock(true)
+		c, err := core.New(core.Options{Cabinet: pl.Cabinet(), Clock: clk, FS: fs, OSBootID: "b"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 150; i++ { // 2.5 min: the last per-minute record is at 2 min
+			pl.Step(1)
+			clk.VT = pl.T
+			c.Step()
+		}
+		alive := clk.Now()
+		// The process dies here: no Close. It is back 3 s later in the same boot.
+		pl.Step(3)
+		clk.VT = pl.T
+		o := core.Options{Cabinet: pl.Cabinet(), Clock: clk, FS: fs, OSBootID: "b"}
+		if hint {
+			o.LastAlive, o.LastAliveUncertSec = alive, 2
+		}
+		c2, err := core.New(o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := c2.Snapshot().Health.LastOutage
+		if !out.Detected || out.Cause != "restart" {
+			t.Fatalf("hint %v: outage %+v", hint, out)
+		}
+		d := out.Duration.Seconds()
+		if hint && (d < 2.5 || d > 4) {
+			t.Errorf("with a sign of life 3 s before the return, duration %.1f s", d)
+		}
+		if !hint && d < 20 {
+			t.Errorf("without one, duration %.1f s: expected the per-minute bound", d)
+		}
+	}
+}

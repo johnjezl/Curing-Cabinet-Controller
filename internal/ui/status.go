@@ -38,7 +38,10 @@ type Status struct {
 // first (the end of a cure is news; an old restart burst already seen is not), and
 // standing information last. An old event must never headline over a live excursion
 // (integration defect 9), and a critical one must not hide behind a newer warning
-// until someone has seen it (its re-test).
+// until someone has seen it (its re-test). Within a rank, what nobody has acknowledged
+// comes first, newest first: the latest development is usually the identified cause
+// (HEAT_STUCK_ON after the temperature alarm it explains), and on the rig an older live
+// critical kept the headline over a stuck heater, outputs down and a power outage.
 func sortAlarms(in []api.Alarm) []api.Alarm {
 	out := append([]api.Alarm(nil), in...)
 	rank := func(a api.Alarm) int {
@@ -70,7 +73,7 @@ func sortAlarms(in []api.Alarm) []api.Alarm {
 		if a.Acked != b.Acked {
 			return !a.Acked
 		}
-		return a.Since.Before(b.Since)
+		return a.Since.After(b.Since)
 	})
 	return out
 }

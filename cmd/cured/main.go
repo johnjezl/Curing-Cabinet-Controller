@@ -30,12 +30,15 @@ import (
 var version = "dev"
 
 const (
-	runDir       = "/run/curing-cured"
-	statusFile   = runDir + "/status.json"
-	startsFile   = runDir + "/starts"
-	simSock      = runDir + "/sim.sock"
-	realStateDir = "/var/lib/curing/core"
-	stopBound    = 45 * time.Second // outputs are off first; a slow card only delays the clean flag
+	runDir     = "/run/curing-cured"
+	statusFile = runDir + "/status.json"
+	// lastAliveFile keeps, across a restart within one boot, when the stopped process
+	// last stepped control (written by post-stop from the status file it then removes).
+	lastAliveFile = runDir + "/last-alive"
+	startsFile    = runDir + "/starts"
+	simSock       = runDir + "/sim.sock"
+	realStateDir  = "/var/lib/curing/core"
+	stopBound     = 45 * time.Second // outputs are off first; a slow card only delays the clean flag
 )
 
 func logfJ(format string, args ...any) { fmt.Fprintf(os.Stderr, format+"\n", args...) }
@@ -143,7 +146,11 @@ func postStop(sim bool) {
 		}
 		_ = cab.Close()
 	}
-	// A dead process's status must not read as live.
+	// A dead process's status must not read as live. When it last stepped control is kept
+	// for the next start's outage record.
+	if la := lastAliveFromStatus(statusFile); !la.IsZero() {
+		_ = os.WriteFile(lastAliveFile, []byte(la.UTC().Format(time.RFC3339Nano)+"\n"), 0o640)
+	}
 	_ = os.Remove(statusFile)
 	if err := ui.PaintStopped(ui.DefaultFramebuffer, sim); err != nil {
 		logfJ("<4>cured post-stop: panel: %v", err)

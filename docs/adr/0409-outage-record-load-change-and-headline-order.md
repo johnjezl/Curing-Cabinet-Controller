@@ -64,3 +64,16 @@ Status: accepted. Fixes integration defects 6, 8 and 9. Amends ADR 0107 and ADR 
 
 - The system-alarms file is written off the caller's goroutine, never while holding the alarm table's lock (ADR 0408,
   "Regression found on the rig").
+
+## Revision in the next fix round (defects 6 and 9)
+- A crash's outage was dated from the last per-minute journal record, so a 2.7 s kill on the rig read as 45 s, and in
+  compressed simulation crashes started up to 3.5 virtual hours early. core now takes a later sign of life from outside
+  its journal, used only if it is after its own last record, within an hour of it and not in the future: in real mode,
+  post-stop keeps when the stopped process last stepped control (the status file's write time less the age of its
+  last control tick, so a hang does not count as alive) in /run/curing-cured/last-alive, which exists only within one
+  boot; in simulation, the plant checkpoint's simulated time (written every half second). The stated start uncertainty
+  becomes 2 s, or the checkpoint interval in simulated time. A power cut keeps the per-minute bound in real mode.
+- Headline: within a rank, unacknowledged alarms come first, newest first (was oldest first). On the rig an older live
+  critical ("humidity reading looks wrong") kept the headline over HEAT_STUCK_ON, outputs down and a power outage; the
+  newest is usually the cause named after the excursion it explains, or a new fault.
+`TestCrashDatedFromTheLastSignOfLife`, `TestLastAliveFromStatus` and `TestHeadlineRanksLiveConditionsOverEvents` hold this.

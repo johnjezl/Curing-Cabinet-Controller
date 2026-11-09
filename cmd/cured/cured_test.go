@@ -638,3 +638,23 @@ func TestControlLoopNeverWaitsForTheDisk(t *testing.T) {
 	r.openingsW.Flush(3 * time.Second)
 	sys.Flush(3 * time.Second)
 }
+
+// Re-test of defect 6: when the stopped process last stepped control, from its status file.
+func TestLastAliveFromStatus(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "status.json")
+	if err := os.WriteFile(path, []byte(`{"mode":"real","control_last_tick_age_s":1.5}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fi, _ := os.Stat(path)
+	if got := lastAliveFromStatus(path); !got.Equal(fi.ModTime().Add(-1500 * time.Millisecond)) {
+		t.Errorf("real mode: %v, want the write time less the tick age", got)
+	}
+	_ = os.WriteFile(path, []byte(`{"mode":"simulation","control_last_tick_age_s":1.5}`), 0o644)
+	if got := lastAliveFromStatus(path); !got.IsZero() {
+		t.Errorf("a simulation's status is not a real sign of life: %v", got)
+	}
+	if got := lastAliveFromStatus(filepath.Join(dir, "none")); !got.IsZero() {
+		t.Errorf("no file: %v", got)
+	}
+}

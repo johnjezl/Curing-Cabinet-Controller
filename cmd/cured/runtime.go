@@ -247,6 +247,47 @@ func (r *runtime) wireOpenings(contactFile string) {
 	r.ann.openings, r.ann.persist = n, write
 }
 
+// statusEvery is how often the status file is rewritten.
+const statusEvery = 2 * time.Second
+
+// lastAliveFromStatus is when a process last stepped control, from the status file it
+// rewrote every couple of seconds. The age of the last control tick is subtracted, so a
+// hung loop is not counted as alive. Real mode only: a simulation's control runs on
+// simulated time.
+func lastAliveFromStatus(path string) time.Time {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return time.Time{}
+	}
+	var v struct {
+		Age  *float64 `json:"control_last_tick_age_s"`
+		Mode string   `json:"mode"`
+	}
+	if json.Unmarshal(b, &v) != nil || v.Age == nil || v.Mode != "real" || *v.Age < 0 {
+		return time.Time{}
+	}
+	return fi.ModTime().Add(-time.Duration(*v.Age * float64(time.Second)))
+}
+
+// lastAliveRecorded is what post-stop kept for this start. The file is on tmpfs, so it
+// exists only after a restart within one boot: a crash, a kill or a hang the watchdog
+// ended. core uses it only if it is later than its own last record.
+func lastAliveRecorded() time.Time {
+	b, err := os.ReadFile(lastAliveFile)
+	if err != nil {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(b)))
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
 // flushSaves gives cured's own state files a moment to reach the disk at an orderly
 // stop. They are written off the control loop; what does not make it in time is the
 // newest change or so, as at a power cut.
@@ -296,7 +337,7 @@ func (r *runtime) noteStart() {
 // supervise rechecks system conditions and publishes status. It runs off the
 // control goroutine and changes only the alarm table.
 func (r *runtime) supervise(ctx context.Context) {
-	t := time.NewTicker(2 * time.Second)
+	t := time.NewTicker(statusEvery)
 	defer t.Stop()
 	n := 0
 	r.lastFrame.Store(time.Now().UnixNano())
@@ -461,8 +502,9 @@ func runReal(ctx context.Context) error {
 	} else {
 		fs = osfs
 	}
+	lastAlive := lastAliveRecorded()
 	c, err := core.New(core.Options{Cabinet: coreCab, Clock: clk, FS: fs, Speed: 1, Version: version, AsyncDepth: 256, Trace: traceBoot,
-		OSBootID: strings.TrimSpace(bootID()),
+		OSBootID: strings.TrimSpace(bootID()), LastAlive: lastAlive, LastAliveUncertSec: statusEvery.Seconds(),
 		Watchdog: watchedWD{inner: wd, last: &lastPet, on: func(e error) {
 			if errors.Is(e, hal.ErrOutputsDropped) {
 				r.ann.Dropped()

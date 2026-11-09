@@ -203,4 +203,14 @@ func TestHeadlineRanksLiveConditionsOverEvents(t *testing.T) {
 	if strings.Join(order, ",") != strings.Join(want, ",") {
 		t.Fatalf("order %v, want %v", order, want)
 	}
+	// Among live criticals nobody has acknowledged, the newest leads: the cause named
+	// after the excursion it explains, or a new fault, is the news.
+	got = sortAlarms([]api.Alarm{
+		al("RH_READING_DISAGREES", api.SevCritical, false, 0),
+		al("TEMP_HIGH_CRITICAL", api.SevCritical, false, time.Hour),
+		al("HEAT_STUCK_ON", api.SevCritical, false, 2*time.Hour),
+	})
+	if got[0].Code != "HEAT_STUCK_ON" {
+		t.Fatalf("headline %s, want the newest unacknowledged critical", got[0].Code)
+	}
 }

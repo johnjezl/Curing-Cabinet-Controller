@@ -180,14 +180,15 @@ func resolveGap(ctx context.Context, ck *checkpoint) (float64, string) {
 
 // simState is the running simulator.
 type simState struct {
-	o     simOptions
-	r     *runtime
-	pl    *sim.Plant
-	clk   *sim.Clock
-	f     *lineFilter
-	inbox chan func()
-	plFS  *core.OSFS
-	seq   uint64
+	o       simOptions
+	r       *runtime
+	pl      *sim.Plant
+	clk     *sim.Clock
+	f       *lineFilter
+	inbox   chan func()
+	plFS    *core.OSFS
+	seq     uint64
+	aliveVT float64 // virtual time of the checkpoint an unclean stop resumed from
 	// ckW writes plant.json off the simulation loop, newest content only. A fault or a
 	// repair is reported only once it is on disk, so a crash cannot undo it unseen.
 	ckW *latestWriter
@@ -376,6 +377,7 @@ func (s *simState) loadOrNewPlant(ctx context.Context) (fresh bool, err error) {
 		logfJ("<5>cured: sim: clean resume at virtual %.0f s, no gap", s.pl.T)
 		return false, nil
 	}
+	s.aliveVT = ck.Plant.T // the last moment the plant is known to have been running
 	gapReal, source := resolveGap(ctx, &ck)
 	gap, stale, capped := virtualGap(s.o.outage, s.o.speed, gapReal)
 	rec := outageRecord{Mode: s.o.outage, Speed: s.o.speed, NewBoot: ck.BootID != bootID(), UptimeAtStart: uptimeNow(),
@@ -485,8 +487,14 @@ func runSim(ctx context.Context, o simOptions) error {
 			r.ann.Dropped()
 		}
 	}}
+	// The plant's last checkpoint, written every half second, is a later sign of life
+	// than core's journal; in simulated time.
+	var lastAlive time.Time
+	if s.aliveVT > 0 {
+		lastAlive = s.clk.BaseWall.Add(time.Duration(s.aliveVT * float64(time.Second)))
+	}
 	c, err := core.New(core.Options{Cabinet: cab, Clock: s.clk, FS: coreFS, Simulated: true, Speed: o.speed, Version: version, AsyncDepth: 1024, Watchdog: wdw, Trace: traceBoot,
-		OSBootID: strings.TrimSpace(bootID())})
+		OSBootID: strings.TrimSpace(bootID()), LastAlive: lastAlive, LastAliveUncertSec: ckptEvery.Seconds() * o.speed})
 	if err != nil {
 		return err
 	}

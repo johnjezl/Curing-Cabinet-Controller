@@ -35,6 +35,13 @@ type Options struct {
 	// OSBootID is the operating system's boot ID, empty if not known. An unclean
 	// stop within the same boot was the process, not the power.
 	OSBootID string
+	// LastAlive is a later moment the previous process is known to have been running,
+	// from outside the journal (cured's status file within one boot, or the simulator's
+	// checkpoint), to within LastAliveUncertSec; zero if not known. The journal's last
+	// record can be up to a minute older (re-test of defect 6: a 2.7 s crash recorded as
+	// 45 s).
+	LastAlive          time.Time
+	LastAliveUncertSec float64
 }
 
 // DefaultLimits are the alarm limits a new cabinet starts with.
@@ -352,8 +359,13 @@ func (c *Core) boot(rec Recovered) {
 	if !first && !wasClean {
 		// Power failed or the process died.
 		// The stop happened after the last durable record, at most one log interval
-		// later. Duration is measured from that record, so it is an upper bound.
-		c.outage = api.Outage{Detected: true, At: lastWall, RecoverSec: -1, StartUncertaintySec: c.cfg.LogInterval, Provisional: true, Cause: "power"}
+		// later. Duration is measured from that record, so it is an upper bound. A later
+		// sign of life from outside the journal narrows it, if it is plausible.
+		uncert := c.cfg.LogInterval
+		if la := c.opts.LastAlive; !la.IsZero() && lastOK && la.After(lastWall) && la.Sub(lastWall) <= time.Hour && !la.After(now) {
+			lastWall, uncert = la, c.opts.LastAliveUncertSec
+		}
+		c.outage = api.Outage{Detected: true, At: lastWall, RecoverSec: -1, StartUncertaintySec: uncert, Provisional: true, Cause: "power"}
 		if sameBoot {
 			c.outage.Cause = "restart"
 		}
