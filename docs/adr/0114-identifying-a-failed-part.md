@@ -95,3 +95,41 @@ unchanged; high now critical at 19 h instead of 6 h, warned at 18 h. Slow drifts
 already took days (-0.1 °C/h: 66 h), and this does not improve it. `TestNoSensorAccusedAfterARoomChangeOrARepair`
 holds the cases above.
 
+
+## Amendment in the next fix round
+Re-tests and the final critics (bench and rig) found: a compressor relay stuck closed was never named on the base
+plant, and HEAT_NO_EFFECT accused the working heater instead (the heater-busy rule only looked while the air stayed
+within 1 °C of setpoint, and a heater losing to a running compressor lets it fall further); on the rig the alarm, when
+raised, cleared hours before the repair because a heater fighting the relay warmed the air, and the COOL chip went back
+to "COOL off"; HUMID_STUCK_ON at 24 °C / 90 % cleared after 5 to 8 h with the humidifier still stuck, because the coil held
+humidity under the clear line; RH_NOT_FALLING told the operator to check for a stuck humidifier during a compressor
+fault and in a cold cabinet with a dead heater; the COOL chip said "removing moisture" with the air 7 °C over setpoint.
+
+Changes:
+- A running coil shows in the humidity: it dries the air under its band (more than 5 %RH under setpoint) and pulls the
+  dew point down. A room turned cold with a dead heater takes the air toward saturation instead. With that sign, the
+  heater-busy rule for COOL_STUCK_ON also applies with the air well under setpoint, and in a heating regime (except while
+  a dehumidifier runs); HEAT_NO_EFFECT is not raised, and is withdrawn, while COOL_STUCK_ON stands or the sign is
+  present. The fast rule (air falling with the compressor off) needs the sign too.
+- COOL_STUCK_ON clears only when the relay is shown to obey: the air warms back with the heater off as well, or the coil
+  has stopped drying (humidity back in band and the dew point up 0.5 °C in half an hour with the compressor off).
+- HUMID_STUCK_ON clears only after humidity has been normal for 1 h (was 2 h) with the compressor no longer running
+  against the reheater most of the time (an hour's average under 20 %; healthy cabinets run 1 to 7 %, a stuck
+  humidifier 42 to 64 %).
+- RH_NOT_FALLING is not raised, and is withdrawn, while COOL_NO_EFFECT, HEAT_NO_EFFECT or HUMID_STUCK_ON explains it.
+- The COOL chip says "cooling" whenever the air is more than 0.3 °C over setpoint, and while COOL_NO_EFFECT stands
+  "running, but the cabinet is not cooling".
+
+Measured on the 36-plant sweep (2 days at setpoint, 12 h observed; 4 / 13 / 24 °C), before and after:
+| Event | Named | Still named at the end | Wrong part accused |
+|---|---|---|---|
+| Compressor relay stuck closed | 28, 19, 9 → 31, 36, 36 | 14, 13, 2 → 31, 36, 36 | heater 28, 33, 36 → 0, 0, 1 |
+| Humidifier stuck on | 28, 18, 19 → 28, 18, 19 | 27, 17, 8 → 28, 18, 18 | RH_NOT_FALLING 26, 26, 9 → 3, 10, 2 |
+| Compressor does not cool | unchanged (29, 33, 15) | | RH_NOT_FALLING 10, 29, 17 → 6, 3, 12 |
+| Heater stuck off in a room 10 °C colder | unchanged (6, 25, 34) | | COOL_STUCK_ON 13, 9, 3 → 14, 11, 2 |
+| Room 10 °C colder; empty humidifier in it | | | COOL_STUCK_ON 0 → 1 at 13 °C in each |
+After a repair COOL_STUCK_ON clears in 20 to 90 min and HUMID_STUCK_ON in 2.5 to 3.5 h on the base plant.
+
+Limit: a sudden 10 °C colder room with a dead heater also dries the air on the simulator's plant (its cold walls
+condense), so COOL_STUCK_ON still names the compressor on 2 to 14 of 36 weak plants in that case, as before this change.
+Nothing here measures the walls or the coil, which is what would tell them apart.

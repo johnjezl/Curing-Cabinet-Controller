@@ -328,8 +328,11 @@ func (c *Core) evalAlarms(dt float64) {
 	c.airBlocked = blocked
 	c.timed(CodeAirBlocked, blocked, !blocked, 30, c.airF.v, 0.12)
 
-	// Airflow against target, not during expected interruptions.
-	airUse := c.chAir.quality == api.QualityOK && !ctl.defrost && t >= ctl.dripUntil && !c.doorOpen && t-c.bootT > 120
+	// Airflow against target, not during expected interruptions. Not while the guard holds
+	// the outputs off, nor for 5 min after: it has stopped the fan, and that is the output
+	// fault, not a blocked filter (re-test of defect 4).
+	airUse := c.chAir.quality == api.QualityOK && !ctl.defrost && t >= ctl.dripUntil && !c.doorOpen && t-c.bootT > 120 &&
+		(c.lastOutErrT == 0 || t-c.lastOutErrT > 300)
 	target := set.AirMS
 	if airUse && target > 0 {
 		c.timed(CodeAirLow, c.airF.v < target*0.6, c.airF.v > target*0.75, 300, c.airF.v, target*0.6)
@@ -471,6 +474,12 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	// Compressor off and air keeps falling fast. In a cabinet that normally needs
 	// cooling the room is warmer than the air, so it takes a closed relay. In a
 	// heating regime a cold room can do this alone, so the rule does not apply.
+	// The coil shows in the humidity: a running compressor dries the air under its band
+	// and pulls the dew point down; once it stops, both come back.
+	dew30 := c.dewRing[len(c.dewRing)-1]
+	dried := c.chRH.ok() && c.rhF.v < set.RHPct-5
+	coilDrying := !math.IsNaN(dew) && !math.IsNaN(dew30) && dew30-dew >= 0.3 && dried
+	coilStopped := !ctl.comp.on && !dried && !math.IsNaN(dew) && !math.IsNaN(dew30) && dew-dew30 >= 0.5
 	if !ctl.comp.on && tOK && quiet && (c.st.CoolDuty > 0.03 || c.coolStuck) {
 		off := t - ctl.comp.lastStop
 		if !ctl.comp.hasStop {
@@ -492,7 +501,9 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 			// pushes the dew point up, and a room turned cold cools the air far faster than
 			// its leak of dry air lowers the dew point.
 			condensing := math.IsNaN(dew) || math.IsNaN(c.coolOffDew0) || c.coolOffDew0-dew >= 0.5*(c.coolOffT0-ts)
-			if c.coolOffT0-ts >= 1.0 && t-c.coolOffStart < 1500 && condensing {
+			// Cold walls in a cold room condense too; only a coil dries the air under its
+			// band while doing it.
+			if c.coolOffT0-ts >= 1.0 && t-c.coolOffStart < 1500 && condensing && (dried || !c.chRH.ok()) {
 				if !c.coolStuck {
 					c.coolStuckMin = ts
 				}
@@ -502,7 +513,10 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 				if ts < c.coolStuckMin {
 					c.coolStuckMin = ts
 				}
-				if ts > c.coolStuckMin+0.5 {
+				// The relay is shown to obey only when the air warms back with the heater
+				// off too: a heater fighting a closed relay also warms it, and the alarm
+				// then cleared hours before the repair (re-test of defect 1).
+				if ts > c.coolStuckMin+0.5 && (t-c.lastHeatOn > 600 || coilStopped) {
 					c.coolStuck = false
 				}
 			}
@@ -522,14 +536,23 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	// condenses water against a heater that keeps up. A room turned cold with a heater
 	// that does not work lets the air fall well under setpoint, and that is
 	// HEAT_NO_EFFECT; its cold walls pull the dew point down too.
-	dew30 := c.dewRing[len(c.dewRing)-1]
-	dewFalling := (math.IsNaN(dew) || math.IsNaN(dew30) || dew30-dew >= 0.3) && ts > set.TempC-1
-	if tOK && quiet && !ctl.comp.on && ctl.driftAge >= 6*3600 && c.st.CoolDuty > 0.03 && ctl.dutyFast.v < c.st.CoolDuty-0.2 && ctl.dutyFast.v < -0.1 &&
+	//
+	// A heater that cannot keep up lets the air fall further, and then the coil shows in
+	// the humidity: a running compressor dries the air under its band, while a room
+	// turned cold with a dead heater takes the air toward saturation. So the air may be
+	// well under setpoint when the humidity has gone under its band too (re-test of
+	// defect 1: a closed compressor relay was never named, and the heater was accused).
+	dewFalling := (math.IsNaN(dew) || math.IsNaN(dew30) || dew30-dew >= 0.3) && (ts > set.TempC-1 || dried)
+	// In a heating regime a busy heater is ordinary, unless a coil is drying the air with
+	// the compressor commanded off: at a 24 °C ferment a closed relay held the air at
+	// 12 °C with nothing naming it.
+	regime := c.st.CoolDuty > 0.03 || (coilDrying && !ctl.dehumOut)
+	if tOK && quiet && !ctl.comp.on && ctl.driftAge >= 6*3600 && regime && ctl.dutyFast.v < c.st.CoolDuty-0.2 && ctl.dutyFast.v < -0.1 &&
 		!c.humOnStuck && c.humSatSince == 0 && dewFalling { // reheat against a humidifier's mist is not this
 		c.coolStuck = true
 		c.coolStuckMin = ts
-	} else if c.coolStuck && ctl.dutyFast.v > -0.05 && ts > set.TempC-1 {
-		c.coolStuck = false
+	} else if c.coolStuck && ((ctl.dutyFast.v > -0.05 && ts > set.TempC-1) || coilStopped) {
+		c.coolStuck = false // the heater is no longer fighting, or the coil has stopped drying
 	}
 	c.timed(CodeCoolStuck, c.coolStuck, !c.coolStuck, 0, ts, set.TempC)
 
@@ -550,6 +573,11 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 		on = 1
 	}
 	c.compRecent.add(on, dt)
+	both := 0.0
+	if ctl.comp.on && ctl.heatOn {
+		both = 1
+	}
+	c.reheatRecent.add(both, dt)
 	if t >= c.tRingT {
 		c.tRingT = t + 300
 		copy(c.tRing[1:], c.tRing[:len(c.tRing)-1])
@@ -591,8 +619,11 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	// humidifier commanded off for half an hour and the cabinet dehumidifying as it does,
 	// a wet load does not keep the air at saturation for most of 20 minutes (each
 	// compressor run dips it briefly, so this is an average, not an unbroken spell). It
-	// latches until humidity has stayed normal for 2 h, because the coil pulls it down
-	// between peaks.
+	// latches until humidity has stayed normal for 1 h with the coil no longer working
+	// against the reheater most of the time: a humidifier still stuck on is what keeps
+	// it there, and humidity held normal by that effort is not a repair (re-test of
+	// defect 1: at 24 °C / 90 % it cleared after 5 to 8 h and never came back). Healthy,
+	// the compressor runs against the reheater 1 to 7 % of the time; stuck, 42 to 64 %.
 	rhOK := c.chRH.ok()
 	sat := math.Max(97, set.RHPct+5)
 	if !ctl.defrost {
@@ -620,11 +651,13 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	switch {
 	case humEvidence:
 		c.humOnStuck, c.humStuckClearT = true, 0
+	case c.humOnStuck && c.reheatRecent.v >= 0.2:
+		c.humStuckClearT = 0 // the coil is still fighting added water
 	case c.humOnStuck && rhOK && c.rhS.v < math.Min(95, set.RHPct+5):
 		if c.humStuckClearT == 0 {
 			c.humStuckClearT = t
 		}
-		if t-c.humStuckClearT >= 7200 {
+		if t-c.humStuckClearT >= 3600 {
 			c.humOnStuck = false
 		}
 	case c.humOnStuck && c.rhS.v >= sat:
@@ -633,8 +666,13 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	c.timed(CodeHumidOnStuck, c.humOnStuck, !c.humOnStuck, 0, c.rhS.v, set.RHPct)
 
 	// Heater working hard with no result. Not against air saturated by mist: evaporation
-	// takes the heat, and that is HUMID_STUCK_ON's case, not a dead heater.
-	if tOK && quiet && ts < set.TempC-0.7 && !ctl.comp.on && !c.humOnStuck && c.humSat.v < 0.3 {
+	// takes the heat, and that is HUMID_STUCK_ON's case, not a dead heater. Not while a
+	// coil is drying the air with the compressor commanded off either: that is a closed
+	// compressor relay winning against a working heater.
+	if c.coolStuck || coilDrying {
+		c.heatFailing = false
+	}
+	if tOK && quiet && ts < set.TempC-0.7 && !ctl.comp.on && !c.humOnStuck && c.humSat.v < 0.3 && !c.coolStuck && !coilDrying {
 		if ctl.heatOn {
 			c.heatEffort += dt
 		}
@@ -673,8 +711,14 @@ func (c *Core) evalActuators(set api.Setpoints, dt float64) {
 	} else if !c.chRH.ok() || c.rhS.v < set.RHPct+2 {
 		c.rhHighSince = 0
 	}
-	humHigh := c.rhHighSince != 0 && t-c.rhHighSince >= 6*3600
-	c.timed(CodeHumidStuck, humHigh, c.rhHighSince == 0, 0, c.rhS.v, set.RHPct)
+	// Not when a named fault already explains it: a compressor that does not cool cannot
+	// dry the air, a heater that does not work lets the cabinet go cold and its air
+	// saturate with the compressor idle, and a humidifier shown stuck on is the cause it
+	// would suggest (re-test of defect 1: it told the operator to check the humidifier
+	// during a compressor fault).
+	explained := c.coolFailing || c.heatFailing || c.humOnStuck
+	humHigh := c.rhHighSince != 0 && t-c.rhHighSince >= 6*3600 && !explained
+	c.timed(CodeHumidStuck, humHigh, c.rhHighSince == 0 || explained, 0, c.rhS.v, set.RHPct)
 
 	// Single-signal doubts: see crosscheck.go. These must hold 12 h, because a
 	// room's daily cycle also moves them, and they ask for a check and change nothing.

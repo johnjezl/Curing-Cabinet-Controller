@@ -125,6 +125,7 @@ type Core struct {
 	lastHeatOn, lastHumOn             float64
 	heatStuck, humOnStuck             bool
 	compRecent                        ema // compressor on-time over the last half hour or so
+	reheatRecent                      ema // compressor against the reheater, the last hour or so
 	humSat                            ema // share of the last 20 min or so at saturation with the humidifier off
 	tRing, dewRing                    [7]float64
 	tRingT                            float64
@@ -223,6 +224,7 @@ func New(o Options) (*Core, error) {
 	c.ctl.dutyBase.tau, c.ctl.humidBase.tau = 21*24*3600, 21*24*3600
 	c.ctl.dutyFast.tau = 3600
 	c.compRecent.tau = 1800
+	c.reheatRecent.tau = 3600
 	c.humSat.tau = 1200
 	c.ctl.dehumEffort.tau, c.ctl.dehumBase.tau = 12*3600, 21*24*3600
 	c.acc.reset()
@@ -1292,7 +1294,7 @@ func (c *Core) outputStatus() []api.OutputStatus {
 	switch {
 	case ctl.comp.on && !tOK:
 		cool = st(co, true, "fault", "running a blind pattern: temperature data is bad")
-	case ctl.comp.on && ctl.dehum:
+	case ctl.comp.on && ctl.dehum && !(tOK && c.tF.v > set.TempC+0.3):
 		cool = st(co, true, "normal", "removing moisture")
 	case ctl.comp.on:
 		cool = st(co, true, "normal", "cooling")
@@ -1379,6 +1381,9 @@ func (c *Core) outputStatus() []api.OutputStatus {
 		hum = st(hu, false, "normal", fmt.Sprintf("%.0f %% under setpoint: the average of the last few minutes needs no pulse yet", set.RHPct-c.rhF.v))
 	}
 	// What the cabinet's response proves overrides what was commanded.
+	if c.al.active[CodeCoolFail] != nil && ctl.comp.on {
+		cool = st(co, true, "fault", "running, but the cabinet is not cooling: check the compressor")
+	}
 	if c.al.active[CodeCoolStuck] != nil {
 		cool = st(co, true, "stuck", "relay appears stuck closed: the air falls with the compressor commanded off")
 	}

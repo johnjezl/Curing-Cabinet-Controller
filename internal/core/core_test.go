@@ -1437,7 +1437,7 @@ func TestOutputWriteFaultOpensContactThroughGuard(t *testing.T) {
 	if alarmEvents(r, core.CodeOutputFault) == 0 {
 		t.Fatal("output fault not reported")
 	}
-	for _, code := range []string{core.CodeOutDropped, core.CodeFanStall, core.CodeCoolFail} {
+	for _, code := range []string{core.CodeOutDropped, core.CodeFanStall, core.CodeCoolFail, core.CodeAirLow} {
 		if n := alarmEvents(r, code); n != 0 {
 			t.Errorf("%s raised %d times across an output fault", code, n)
 		}

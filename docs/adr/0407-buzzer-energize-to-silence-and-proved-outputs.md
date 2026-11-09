@@ -66,3 +66,9 @@ Changes, each removing a judgment made on something that did not happen:
 
 `TestOutputWriteFaultOpensContactThroughGuard` (an hour's fault in a room 12 °C warmer) and
 `TestAfterADropNoBriefCloseAndTheBuzzerSounds` hold this.
+
+## Second amendment (next fix round)
+AIR_LOW, like FAN_STALL, is not raised while the guard holds the outputs off or for 5 min after: the guard stopped the
+fan. The COOL chip's proved state now includes COOL_NO_EFFECT ("running, but the cabinet is not cooling"), and a closed
+compressor relay is named and kept named as ADR 0114's amendment describes, so the chip no longer returns to "COOL off"
+while the relay is still closed.

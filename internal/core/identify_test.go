@@ -9,7 +9,8 @@ import (
 // Integration defect 1, diagnosis half (ADR 0114): each failed part is named, within a
 // stated time, and a healthy part is not accused in a hot room or while recovering.
 func TestEachFailedPartIsNamedAndNoneAccusedFalsely(t *testing.T) {
-	equip := []string{"HEAT_STUCK_ON", "HUMID_STUCK_ON", "COOL_NO_EFFECT", "COOL_STUCK_ON", "HEAT_NO_EFFECT", "HUMID_NO_EFFECT"}
+	equip := []string{"HEAT_STUCK_ON", "HUMID_STUCK_ON", "COOL_NO_EFFECT", "COOL_STUCK_ON", "HEAT_NO_EFFECT", "HUMID_NO_EFFECT",
+		"RH_NOT_FALLING"} // it points at a humidifier relay stuck closed
 	for _, c := range []struct {
 		name   string
 		setT   float64
@@ -26,6 +27,14 @@ func TestEachFailedPartIsNamedAndNoneAccusedFalsely(t *testing.T) {
 		{"humidifier stuck at 24", 24, 90, func(r *sim.Run) { r.Plant.Inject(sim.DevHumid, sim.FaultRelayStuckOn, 0) }, "HUMID_STUCK_ON", 120},
 		{"compressor does not cool", 13, 76, func(r *sim.Run) { r.Plant.Inject(sim.DevCompressor, sim.FaultNoCool, 0) }, "COOL_NO_EFFECT", 90},
 		{"room 12 warmer", 13, 76, func(r *sim.Run) { r.Plant.AmbientOffset = 12 }, "", 0},
+		// Next fix round: a closed compressor relay against a heater that cannot keep up
+		// was never named, and the heater was accused; at a heating setpoint too.
+		{"compressor relay stuck closed at 13", 13, 76, func(r *sim.Run) { r.Plant.Inject(sim.DevCool, sim.FaultRelayStuckOn, 0) }, "COOL_STUCK_ON", 60},
+		{"compressor relay stuck closed at 24", 24, 90, func(r *sim.Run) { r.Plant.Inject(sim.DevCool, sim.FaultRelayStuckOn, 0) }, "COOL_STUCK_ON", 60},
+		{"humidifier empty in a cold room at 24", 24, 90, func(r *sim.Run) {
+			r.Plant.AmbientOffset = -10
+			r.Plant.Inject(sim.DevHumidifier, sim.FaultEmpty, 0)
+		}, "", 0},
 		// A cabinet gone cold saturates its air too; that is not a humidifier.
 		{"heater stuck off in a cold room", 13, 76, func(r *sim.Run) {
 			r.Plant.AmbientOffset = -10
@@ -74,6 +83,16 @@ func TestEachFailedPartIsNamedAndNoneAccusedFalsely(t *testing.T) {
 			}
 			if c.want != "" && !found {
 				t.Errorf("%s never raised", c.want)
+			}
+			// The part is still broken at the end: the alarm must still stand.
+			if c.want != "" && found {
+				standing := false
+				for _, a := range r.Core.Snapshot().Active {
+					standing = standing || a.Code == c.want
+				}
+				if !standing {
+					t.Errorf("%s cleared while the fault was still there", c.want)
+				}
 			}
 		})
 	}
